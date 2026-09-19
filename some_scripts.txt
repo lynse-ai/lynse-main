@@ -1,0 +1,47 @@
+ minSdk = 26 ⚠️
+ 
+测试customerId 1905809889529757698
+
+登录类型:
+
+WECHAT_APPLET 微信小程序登录
+WECHAT_SCAN 微信网页扫码登录,
+WECHAT_JUMP 跳转微信登录
+
+PWD 账号密码登录
+GOOGLE 谷歌登录
+APPLE 苹果登录
+
+
+CONCLUSION 总结,
+OUTLINE 概括,
+MIND_MAP 思维导图
+
+VIP 权益：
+packageType=> 免费/Pro/Max）
+
+
+WX_JSAPI - 微信公众号支付
+WX_NATIVE - 微信扫码支付 
+WX_APP - 微信APP支付
+WX_WAP - 微信H5支付
+WX_LITE - 小程序支付
+ALI_APP - 支付宝APP支付
+ALI_PAGE - 支付宝PC网站支付
+ALI_WAP - 支付宝手机网站支付
+ALI_PRECREATE - 支付宝扫码支付
+ALI_PAY - 支付宝条形码、声波支付
+ALI_LITE - 支付宝小程序支付
+APPLE_APP - 苹果支付
+
+
+支付类型:
+年支付 YEARLY,
+季支付  QUARTERLY,
+月支付  MONTHLY,
+日支付 DAILY
+
+
+var downloadsPath = await getApplicationDocumentsDirectory(); 下载路径
+var cachePath = await getApplicationCacheDirectory();   本地缓存路径
+ 

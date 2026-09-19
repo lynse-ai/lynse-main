@@ -1,0 +1,82 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'file_info.dart';
+
+// **************************************************************************
+// JsonSerializableGenerator
+// **************************************************************************
+
+FileInfoModel _$FileInfoModelFromJson(Map<String, dynamic> json) =>
+    FileInfoModel(
+      id: json['id'] as String?,
+      tenantId: json['tenantId'] as String?,
+      createBy: json['createBy'] as String?,
+      createTime: json['createTime'] as String?,
+      updateBy: json['updateBy'] as String?,
+      updateTime: json['updateTime'] as String?,
+      url: json['url'] as String?,
+      filename: json['filename'] as String?,
+      originalFilename: json['originalFilename'] as String?,
+      path: json['path'] as String?,
+      objectId: json['objectId'] as String?,
+      objectType: json['objectType'] as String?,
+      uploadId: json['uploadId'] as String?,
+      uploadStatus: (json['uploadStatus'] as num?)?.toInt(),
+      customerId: json['customerId'] as String?,
+      nickname: json['nickname'] as String?,
+      folderId: json['folderId'] as String?,
+      outlineId: json['outlineId'] as String?,
+      mindMapId: json['mindMapId'] as String?,
+      conclusionId: json['conclusionId'] as String?,
+      transcribeTaskId: json['transcribeTaskId'] as String?,
+      transcribeStatus: json['transcribeStatus'] as String?,
+      macAddress: json['macAddress'] as String?,
+      location: json['location'] as String?,
+      bizDuration: (json['bizDuration'] as num?)?.toInt(),
+      isRead: (json['isRead'] as num?)?.toInt(),
+      mode: json['mode'] as String?,
+      folderName: json['folderName'] as String?,
+      shareTime: json['shareTime'] as String?,
+      avatarUrl: json['avatarUrl'] as String?,
+      requiredPoints: (json['requiredPoints'] as num?)?.toInt(),
+      isExamples: (json['isExamples'] as num?)?.toInt(),
+      recordStartTime: json['recordStartTime'] as String?,
+    )..language = json['language'] as String?;
+
+Map<String, dynamic> _$FileInfoModelToJson(FileInfoModel instance) =>
+    <String, dynamic>{
+      'id': instance.id,
+      'tenantId': instance.tenantId,
+      'createBy': instance.createBy,
+      'createTime': instance.createTime,
+      'updateBy': instance.updateBy,
+      'updateTime': instance.updateTime,
+      'url': instance.url,
+      'filename': instance.filename,
+      'originalFilename': instance.originalFilename,
+      'path': instance.path,
+      'objectId': instance.objectId,
+      'objectType': instance.objectType,
+      'uploadId': instance.uploadId,
+      'uploadStatus': instance.uploadStatus,
+      'customerId': instance.customerId,
+      'nickname': instance.nickname,
+      'folderId': instance.folderId,
+      'outlineId': instance.outlineId,
+      'conclusionId': instance.conclusionId,
+      'mindMapId': instance.mindMapId,
+      'transcribeTaskId': instance.transcribeTaskId,
+      'transcribeStatus': instance.transcribeStatus,
+      'macAddress': instance.macAddress,
+      'location': instance.location,
+      'bizDuration': instance.bizDuration,
+      'isRead': instance.isRead,
+      'mode': instance.mode,
+      'folderName': instance.folderName,
+      'shareTime': instance.shareTime,
+      'avatarUrl': instance.avatarUrl,
+      'requiredPoints': instance.requiredPoints,
+      'isExamples': instance.isExamples,
+      'recordStartTime': instance.recordStartTime,
+      'language': instance.language,
+    };

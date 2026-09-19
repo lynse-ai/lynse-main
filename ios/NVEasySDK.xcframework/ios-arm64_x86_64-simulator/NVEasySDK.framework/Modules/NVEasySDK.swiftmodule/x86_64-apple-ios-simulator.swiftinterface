@@ -1,0 +1,542 @@
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Apple Swift version 6.1 effective-5.10 (swiftlang-6.1.0.110.21 clang-1700.0.13.3)
+// swift-module-flags: -target x86_64-apple-ios12.0-simulator -enable-objc-interop -enable-library-evolution -swift-version 5 -enforce-exclusivity=checked -O -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -module-name NVEasySDK
+// swift-module-flags-ignorable:  -interface-compiler-version 6.1
+import AVFAudio
+import CommonCrypto
+import CoreBluetooth
+import Foundation
+@_exported import NVEasySDK
+import Swift
+import UIKit
+import _Concurrency
+import _StringProcessing
+import _SwiftConcurrencyShims
+@_hasMissingDesignatedInitializers final public class NVEasyBackgroundTaskManager {
+  public static let shared: NVEasySDK.NVEasyBackgroundTaskManager
+  final public var setAudioSessionCategoryBlock: ((AVFAudio.AVAudioSession) -> Swift.Void)?
+  final public var silentAudioPath: Swift.String?
+  @objc deinit
+}
+extension NVEasySDK.NVEasyBackgroundTaskManager {
+  final public func guardStartedBackground()
+  final public func stopBackground()
+}
+extension NVEasySDK.NVEasyBLEManager {
+  @objc dynamic public func check(file fileUrl: Foundation.URL, crc: Swift.String) -> Swift.Bool
+}
+public enum NVEasyAction : Swift.String {
+  case format
+  case deleteFile
+  case btName
+  case bleName
+  case offTime
+  case queryBtName
+  case queryBleName
+  case queryOffTime
+  case micGain
+  case queryMicGain
+  case osType
+  case rtc
+  case getFileList
+  case devicePair
+  case deviceUnpair
+  public init?(rawValue: Swift.String)
+  public typealias RawValue = Swift.String
+  public var rawValue: Swift.String {
+    get
+  }
+}
+@objc public class NVManufactureMode : ObjectiveC.NSObject, Swift.OptionSet {
+  final public let rawValue: Swift.UInt8
+  required public init(rawValue: Swift.UInt8)
+  public func aiMode() -> NVEasySDK.NVEasyAIMode
+  public func isBound() -> Swift.Bool
+  @objc override dynamic public var description: Swift.String {
+    @objc get
+  }
+  public typealias ArrayLiteralElement = NVEasySDK.NVManufactureMode
+  public typealias Element = NVEasySDK.NVManufactureMode
+  public typealias RawValue = Swift.UInt8
+  @objc deinit
+}
+extension NVEasySDK.NVManufactureMode : Foundation.NSCopying {
+  @objc dynamic public func copy(with zone: ObjectiveC.NSZone? = nil) -> Any
+}
+public enum NVEasyANCOption : Swift.Int {
+  case off, on, transparent
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyEQOption : Swift.Int {
+  case query
+  case eq1, eq2, eq3, eq4, eq5, eq6, eq7, eq8
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyButtonFunction : Swift.Int {
+  case playPause, down, up, next, previous, voiceAssistant
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyRecordAction : Swift.Int {
+  case stop, start, pause, resume
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyDevrecAction : Swift.Int {
+  case updateMode, stop, start, interruptedByCall, cancel
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyRecordMode : Swift.Int {
+  case meeting, call
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyRecordType : Swift.Int {
+  case offline, online
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyRecordSampleRate : Swift.Int {
+  case _8k, _16k, _32k
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyAIMode : Swift.Int {
+  case tws, ai, none
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyCallState : Swift.Int {
+  case idle, calling
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyPlayState : Swift.Int {
+  case pause, start
+  public init?(rawValue: Swift.Int)
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+public enum NVEasyPairRole : Swift.String {
+  case leftEarphone, rightEarphone, `case`
+  public init?(rawValue: Swift.String)
+  public typealias RawValue = Swift.String
+  public var rawValue: Swift.String {
+    get
+  }
+}
+extension NVEasySDK.NVEasyFileManager {
+  public func startTCPTransferCmd(sn: Swift.Int, autoDelete: Swift.Bool, offsetInBytes: Swift.Int?) -> Foundation.Data
+  public func cancelTCPTransferCmd() -> Foundation.Data
+  public func didReceiveTCPCmd(_ value: Foundation.Data) -> Foundation.Data?
+}
+extension CoreBluetooth.CBPeripheral {
+  @objc dynamic public var advVDLocalName: Swift.String? {
+    @objc get
+    @objc set
+  }
+  @objc dynamic public var manufacturerHWData: Foundation.Data? {
+    @objc get
+    @objc set
+  }
+  @objc dynamic public var manufacturerAddr: Swift.String {
+    @objc get
+  }
+  @objc dynamic public var advertisementRSSI: Foundation.NSNumber? {
+    @objc get
+    @objc set
+  }
+  @objc dynamic public var reversedMac: Swift.String {
+    @objc get
+  }
+  @objc dynamic public var mac: Swift.String {
+    @objc get
+  }
+  @objc dynamic public var manufacturerMode: NVEasySDK.NVManufactureMode? {
+    @objc get
+  }
+  public var ability1: Swift.UInt8? {
+    get
+  }
+  public var hasLocalStorage: Swift.Bool {
+    get
+  }
+  public var hasWiFiAP: Swift.Bool {
+    get
+  }
+  public var hasMeetingRecording: Swift.Bool {
+    get
+  }
+  public var hasCallRecording: Swift.Bool {
+    get
+  }
+  public var hasMeetingNoiseReduction: Swift.Bool {
+    get
+  }
+  public var hasClassicBluetooth: Swift.Bool {
+    get
+  }
+  public var hasRTC: Swift.Bool {
+    get
+  }
+  public var hasMultimediaRecording: Swift.Bool {
+    get
+  }
+  public var ability2: Swift.UInt8? {
+    get
+  }
+  public var hasEarphoneSeparation: Swift.Bool {
+    get
+  }
+  public var hasWiFiV2: Swift.Bool {
+    get
+  }
+  public var ability3: Swift.UInt8? {
+    get
+  }
+  public var ability4: Swift.UInt8? {
+    get
+  }
+  public var protocolVersion: Swift.Int? {
+    get
+  }
+  public var hardwareModel: NVEasySDK.NVHardwareModel {
+    get
+  }
+}
+public enum NVEasyBLError : Swift.Error {
+  case authorization(Swift.String)
+  case business(Swift.Int)
+  case unknown
+}
+@objc @_inheritsConvenienceInitializers @_hasMissingDesignatedInitializers @objcMembers public class NVEasyBLEManager : ObjectiveC.NSObject, CoreBluetooth.CBCentralManagerDelegate, CoreBluetooth.CBPeripheralDelegate {
+  public enum State : Swift.Int {
+    case unknown
+    case resetting
+    case unsupported
+    case unauthorized
+    case poweredOff
+    case poweredOn
+    case connecting
+    case connected
+    case ready
+    case paused
+    case recording
+    case uploading
+    case disconnected
+    public init?(rawValue: Swift.Int)
+    public typealias RawValue = Swift.Int
+    public var rawValue: Swift.Int {
+      get
+    }
+  }
+  @objc public static let shared: NVEasySDK.NVEasyBLEManager
+  @objc public static let sharedExA: NVEasySDK.NVEasyBLEManager
+  @objc public static let sharedExB: NVEasySDK.NVEasyBLEManager
+  @objc public var fileManager: NVEasySDK.NVEasyFileManager {
+    @objc get
+  }
+  @objc public var otaManager: NVEasySDK.NVEasyOTAManager {
+    @objc get
+  }
+  @objc deinit
+  @objc override dynamic public func copy() -> Any
+  @objc override dynamic public func mutableCopy() -> Any
+  weak public var delegate: (any NVEasySDK.NVEasyHardwareDelegate)?
+  public var state: NVEasySDK.NVEasyBLEManager.State {
+    get
+  }
+  @objc public var isConnected: Swift.Bool {
+    @objc get
+  }
+  @objc public var isReady: Swift.Bool {
+    @objc get
+  }
+  public var callState: NVEasySDK.NVEasyCallState {
+    get
+  }
+  @objc public var connectedPeripheral: CoreBluetooth.CBPeripheral? {
+    @objc get
+  }
+  @objc public var lastConnectedPeripheral: CoreBluetooth.CBPeripheral? {
+    get
+  }
+  @objc public var centralManager: CoreBluetooth.CBCentralManager? {
+    get
+  }
+  public var recordMode: NVEasySDK.NVEasyRecordMode? {
+    get
+  }
+  public var aiMode: NVEasySDK.NVEasyAIMode {
+    get
+  }
+  @objc public var isBound: Swift.Bool {
+    get
+  }
+  public var sampleRate: NVEasySDK.NVEasyRecordSampleRate
+  @objc public var algkey: Foundation.Data?
+  @objc public func startAutoConnector()
+  @objc public func endAutoConnector()
+  @objc public func manualStartScan()
+  @objc public func manualStopScan()
+  @objc public func centralManagerDidUpdateState(_ central: CoreBluetooth.CBCentralManager)
+  @objc public func centralManager(_ central: CoreBluetooth.CBCentralManager, didDiscover peripheral: CoreBluetooth.CBPeripheral, advertisementData: [Swift.String : Any], rssi RSSI: Foundation.NSNumber)
+  @objc public func connect(_ peripheral: CoreBluetooth.CBPeripheral)
+  @objc public func disconnect(_ peripheral: CoreBluetooth.CBPeripheral?)
+  @objc public func centralManager(_ central: CoreBluetooth.CBCentralManager, didConnect peripheral: CoreBluetooth.CBPeripheral)
+  @objc public func centralManager(_ central: CoreBluetooth.CBCentralManager, didDisconnectPeripheral peripheral: CoreBluetooth.CBPeripheral, error: (any Swift.Error)?)
+  @objc public func centralManager(_ central: CoreBluetooth.CBCentralManager, didFailToConnect peripheral: CoreBluetooth.CBPeripheral, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didReadRSSI RSSI: Foundation.NSNumber, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didDiscoverServices error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didDiscoverCharacteristicsFor service: CoreBluetooth.CBService, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didWriteValueFor characteristic: CoreBluetooth.CBCharacteristic, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didUpdateValueFor characteristic: CoreBluetooth.CBCharacteristic, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didWriteValueFor descriptor: CoreBluetooth.CBDescriptor, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didUpdateValueFor descriptor: CoreBluetooth.CBDescriptor, error: (any Swift.Error)?)
+  @objc public func peripheral(_ peripheral: CoreBluetooth.CBPeripheral, didUpdateNotificationStateFor characteristic: CoreBluetooth.CBCharacteristic, error: (any Swift.Error)?)
+}
+extension NVEasySDK.NVEasyBLEManager {
+  @objc dynamic public func startRecord(isMeetingMode: Swift.Bool)
+  @objc dynamic public func pauseRecord(isMeetingMode: Swift.Bool)
+  @objc dynamic public func resumeRecord(isMeetingMode: Swift.Bool)
+  @objc dynamic public func stopRecord(isMeetingMode: Swift.Bool)
+  @objc dynamic public func reset()
+  @objc dynamic public func version()
+  @objc dynamic public func battery()
+  @objc dynamic public func volume(_ value: Swift.Int)
+  public func play(_ value: NVEasySDK.NVEasyPlayState)
+  @objc dynamic public func startFind()
+  @objc dynamic public func stopFind()
+  public func anc(_ value: NVEasySDK.NVEasyANCOption)
+  public func eq(_ value: NVEasySDK.NVEasyEQOption)
+  public func button(leftFunction: NVEasySDK.NVEasyButtonFunction, rightFunction: NVEasySDK.NVEasyButtonFunction)
+  @objc dynamic public func queryRecordMode()
+  public func ai(_ value: NVEasySDK.NVEasyAIMode)
+  @objc dynamic public func algKey(_ value: Foundation.Data)
+  @objc dynamic public func getFileList()
+  @objc dynamic public func openWiFi(_ value: Swift.Bool)
+  @objc dynamic public func call()
+  @objc dynamic public func memory()
+  @objc dynamic public func format()
+  @objc dynamic public func bound(_ value: Swift.Bool)
+  @objc dynamic public func unbound(isReset: Swift.Bool, isFormat: Swift.Bool)
+  @objc dynamic public func authsn()
+  @objc dynamic public func delfile(sn: Swift.Int, name: Swift.String)
+  @objc dynamic public func btname(_ name: Swift.String)
+  @objc dynamic public func blename(_ name: Swift.String)
+  @objc dynamic public func offtime(minutes: Swift.Int)
+  @objc dynamic public func queryBtname()
+  @objc dynamic public func queryBlename()
+  @objc dynamic public func queryOfftime()
+  public func micGain(mode: NVEasySDK.NVEasyRecordMode, gain0: Swift.Int, gain1: Swift.Int)
+  public func queryMicGain(mode: NVEasySDK.NVEasyRecordMode)
+  @objc dynamic public func devicePair(sn: Swift.String, earphoneMac: Swift.String, caseMac: Swift.String, labelSN: Swift.String)
+  @objc dynamic public func deviceUnpair()
+  @objc dynamic public func queryPairMessage()
+}
+public protocol NVEasyHardwareDelegate : ObjectiveC.NSObjectProtocol {
+  func ble(manager: NVEasySDK.NVEasyBLEManager, shouldDiscover peripheral: CoreBluetooth.CBPeripheral, advertisementData: [Swift.String : Any]) -> Swift.Bool
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didDiscover peripheral: CoreBluetooth.CBPeripheral)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, peripheral: CoreBluetooth.CBPeripheral, didReadRSSI RSSI: Foundation.NSNumber)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didConnect peripheral: CoreBluetooth.CBPeripheral)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didFailToConnect peripheral: CoreBluetooth.CBPeripheral, error: (any Swift.Error)?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didDisconnectPeripheral peripheral: CoreBluetooth.CBPeripheral, error: (any Swift.Error)?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateState state: NVEasySDK.NVEasyBLEManager.State, isConnected: Swift.Bool)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didReceiveOPUS opusData: Foundation.Data, framSize: Swift.Int32)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateCallState state: NVEasySDK.NVEasyCallState, callNumber: Swift.String?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didReceiveSoftwareVersion software: Swift.String, hardwareVersion: Swift.String)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateBattery left: Swift.UInt, right: Swift.UInt, caseBattery: Swift.UInt)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateVolume volume: Swift.UInt)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdatePlayState state: NVEasySDK.NVEasyPlayState)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateAnc anc: NVEasySDK.NVEasyANCOption)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateEq eq: NVEasySDK.NVEasyEQOption)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateRecord action: NVEasySDK.NVEasyRecordAction, mode: NVEasySDK.NVEasyRecordMode, sampleRate: NVEasySDK.NVEasyRecordSampleRate, channels: Swift.Int, recordType: NVEasySDK.NVEasyRecordType, msDuration: Swift.UInt)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateDevrec action: NVEasySDK.NVEasyDevrecAction, mode: NVEasySDK.NVEasyRecordMode?, aiMode: NVEasySDK.NVEasyAIMode)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didReceiveAlg key: Foundation.Data)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateMemory emptySizeOfKB: Swift.Int, totalSizeOfKB: Swift.Int, isFormatSuccess: Swift.Bool?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didUpdateBound isSuccess: Swift.Bool, isBound: Swift.Bool)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didReceiveAuthsn sn: Swift.String, bleMac: Swift.String, wifiMac: Swift.String, labelSN: Swift.String?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didReceivePairRole role: NVEasySDK.NVEasyPairRole, sn: Swift.String, labelSN: Swift.String, wifiMac: Swift.String?, leftMAC: Swift.String, rightMAC: Swift.String, caseMAC: Swift.String)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, didResponse action: Swift.String, isSuccess: Swift.Bool, params: [Any]?)
+  func ble(manager: NVEasySDK.NVEasyBLEManager, error: any Swift.Error)
+  func otaManager(didStart otaManager: NVEasySDK.NVEasyOTAManager)
+  func otaManager(didEnd otaManager: NVEasySDK.NVEasyOTAManager)
+  func otaManager(_ otaManager: NVEasySDK.NVEasyOTAManager, progress: Swift.Double, error: (any Swift.Error)?)
+  func file(manager: NVEasySDK.NVEasyFileManager, didReceiveFiles files: [NVEasySDK.NVEasyFileInfo])
+  func file(manager: NVEasySDK.NVEasyFileManager, bleDidReceiveOPUS opusData: Foundation.Data, fileSN: Swift.Int, totalPkgCount: Swift.Int, pkgNum: Swift.Int)
+  func file(manager: NVEasySDK.NVEasyFileManager, bleDidFinish isFinish: Swift.Bool, fileSN: Swift.Int, error: (any Swift.Error)?)
+  func file(manager: NVEasySDK.NVEasyFileManager, WiFiDidOpen isOpen: Swift.Bool, hwIP: Swift.String, hwPort: Swift.String, appIP: Swift.String, appPort: Swift.String, softAPSSID: Swift.String, softAPPassword: Swift.String)
+  func file(tcpIsReady manager: NVEasySDK.NVEasyFileManager)
+  func file(manager: NVEasySDK.NVEasyFileManager, WiFiDidReceiveOPUS opusData: Foundation.Data, fileSN: Swift.Int, totalPkgCount: Swift.Int, pkgNum: Swift.Int)
+  func file(manager: NVEasySDK.NVEasyFileManager, WiFiDidFinish isFinish: Swift.Bool, fileSN: Swift.Int, error: (any Swift.Error)?)
+}
+public enum NVHardwareModel : Swift.String, Swift.CaseIterable {
+  case unknown
+  case earphone
+  case card
+  case chargingCase
+  public var displayName: Swift.String {
+    get
+  }
+  public var description: Swift.String {
+    get
+  }
+  public init?(rawValue: Swift.String)
+  public typealias AllCases = [NVEasySDK.NVHardwareModel]
+  public typealias RawValue = Swift.String
+  nonisolated public static var allCases: [NVEasySDK.NVHardwareModel] {
+    get
+  }
+  public var rawValue: Swift.String {
+    get
+  }
+}
+@_hasMissingDesignatedInitializers public class NVEasyURLSessionBlocker {
+  public static let shared: NVEasySDK.NVEasyURLSessionBlocker
+  public var isBlockingEnabled: Swift.Bool {
+    get
+  }
+  public func startBlockingRequests()
+  public func stopBlockingRequests()
+  @objc deinit
+}
+public class NVEasyFileInfo {
+  public var sn: Swift.Int
+  public var name: Swift.String
+  public var size: Swift.Int
+  public var scene: Swift.Int
+  public var startTimestamp: Foundation.TimeInterval
+  public var endTimestamp: Foundation.TimeInterval
+  public var crc: Swift.String?
+  public init(sn: Swift.Int, name: Swift.String, size: Swift.Int, scene: Swift.Int, startTimestamp: Foundation.TimeInterval, endTimestamp: Foundation.TimeInterval, crc: Swift.String?)
+  @objc deinit
+}
+public enum NVEasyFileError : Swift.Error {
+  case canceled
+  case checkFailed(code: Swift.Int)
+  case retry(times: Swift.Int)
+  case timeoutAndAutoRetry
+}
+@objc @_inheritsConvenienceInitializers @_hasMissingDesignatedInitializers public class NVEasyFileManager : ObjectiveC.NSObject {
+  public static let shared: NVEasySDK.NVEasyFileManager
+  public static let sharedExA: NVEasySDK.NVEasyFileManager
+  public static let sharedExB: NVEasySDK.NVEasyFileManager
+  public var bleManager: NVEasySDK.NVEasyBLEManager {
+    get
+  }
+  @objc override dynamic public func copy() -> Any
+  @objc override dynamic public func mutableCopy() -> Any
+  public var retryHandler: ((Foundation.Data) -> Swift.Void)?
+  public var files: [NVEasySDK.NVEasyFileInfo]
+  public func getFile(sn: Swift.Int, useWiFi: Swift.Bool = false, autoDelete: Swift.Bool = false, offsetInBytes: Swift.Int?)
+  public func cancelBleFile(sn: Swift.Int)
+  public func startWiFiTransferCmd(sn: Swift.Int, autoDelete: Swift.Bool, offsetInBytes: Swift.Int?) -> Foundation.Data
+  public func didReceiveWifiCmd(_ value: Foundation.Data) -> Foundation.Data?
+  public func closeWiFi() -> Foundation.Data?
+  @objc deinit
+}
+@_hasMissingDesignatedInitializers public class NVEasySocketBlocker {
+  public static let shared: NVEasySDK.NVEasySocketBlocker
+  @objc deinit
+  public func startBlocking()
+  public func stopBlocking()
+  public func closeAllRecordedSockets()
+  public func isSocketBlockingEnabled() -> Swift.Bool
+  public func setAllowedAddresses(addresses0: Swift.String, port0: Swift.Int32, addresses1: Swift.String, port1: Swift.Int32)
+}
+public enum NVEasyOTAError : Swift.Error {
+  case fileReadFailed(url: Foundation.URL)
+  case invalidIndex(index: Swift.Int)
+  case checkFailed(code: Swift.Int)
+}
+@objc @_inheritsConvenienceInitializers public class NVEasyOTAManager : ObjectiveC.NSObject {
+  public static let shared: NVEasySDK.NVEasyOTAManager
+  public static let sharedExA: NVEasySDK.NVEasyOTAManager
+  public static let sharedExB: NVEasySDK.NVEasyOTAManager
+  public var bleManager: NVEasySDK.NVEasyBLEManager {
+    get
+  }
+  public func upgrade(to version: Swift.String, with fileUrl: Foundation.URL, pkgSize: Swift.Int = 448)
+  @objc override dynamic public init()
+  @objc deinit
+}
+extension NVEasySDK.NVEasyAction : Swift.Equatable {}
+extension NVEasySDK.NVEasyAction : Swift.Hashable {}
+extension NVEasySDK.NVEasyAction : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyANCOption : Swift.Equatable {}
+extension NVEasySDK.NVEasyANCOption : Swift.Hashable {}
+extension NVEasySDK.NVEasyANCOption : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyEQOption : Swift.Equatable {}
+extension NVEasySDK.NVEasyEQOption : Swift.Hashable {}
+extension NVEasySDK.NVEasyEQOption : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyButtonFunction : Swift.Equatable {}
+extension NVEasySDK.NVEasyButtonFunction : Swift.Hashable {}
+extension NVEasySDK.NVEasyButtonFunction : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyRecordAction : Swift.Equatable {}
+extension NVEasySDK.NVEasyRecordAction : Swift.Hashable {}
+extension NVEasySDK.NVEasyRecordAction : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyDevrecAction : Swift.Equatable {}
+extension NVEasySDK.NVEasyDevrecAction : Swift.Hashable {}
+extension NVEasySDK.NVEasyDevrecAction : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyRecordMode : Swift.Equatable {}
+extension NVEasySDK.NVEasyRecordMode : Swift.Hashable {}
+extension NVEasySDK.NVEasyRecordMode : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyRecordType : Swift.Equatable {}
+extension NVEasySDK.NVEasyRecordType : Swift.Hashable {}
+extension NVEasySDK.NVEasyRecordType : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyRecordSampleRate : Swift.Equatable {}
+extension NVEasySDK.NVEasyRecordSampleRate : Swift.Hashable {}
+extension NVEasySDK.NVEasyRecordSampleRate : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyAIMode : Swift.Equatable {}
+extension NVEasySDK.NVEasyAIMode : Swift.Hashable {}
+extension NVEasySDK.NVEasyAIMode : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyCallState : Swift.Equatable {}
+extension NVEasySDK.NVEasyCallState : Swift.Hashable {}
+extension NVEasySDK.NVEasyCallState : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyPlayState : Swift.Equatable {}
+extension NVEasySDK.NVEasyPlayState : Swift.Hashable {}
+extension NVEasySDK.NVEasyPlayState : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyPairRole : Swift.Equatable {}
+extension NVEasySDK.NVEasyPairRole : Swift.Hashable {}
+extension NVEasySDK.NVEasyPairRole : Swift.RawRepresentable {}
+extension NVEasySDK.NVEasyBLEManager.State : Swift.Equatable {}
+extension NVEasySDK.NVEasyBLEManager.State : Swift.Hashable {}
+extension NVEasySDK.NVEasyBLEManager.State : Swift.RawRepresentable {}
+extension NVEasySDK.NVHardwareModel : Swift.Equatable {}
+extension NVEasySDK.NVHardwareModel : Swift.Hashable {}
+extension NVEasySDK.NVHardwareModel : Swift.RawRepresentable {}

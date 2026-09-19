@@ -1,0 +1,7 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+// Xcode 27 模拟器默认 ARCHS 含 x86_64，与 arm64-only 的 Pods 冲突；Debug 只编本机架构
+ONLY_ACTIVE_ARCH = YES
+// 钉死本机架构，避免 x86_64 切片与 arm64-only Pods 冲突
+ARCHS = arm64

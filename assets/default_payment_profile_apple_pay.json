@@ -1,0 +1,19 @@
+{
+    "provider": "apple_pay",
+    "data": {
+        "merchantIdentifier": "merchant.com.lynseai.dting",
+        "displayName": "geekdance",
+        "merchantCapabilities": [
+            "3DS",
+            "debit",
+            "credit"
+        ],
+        "supportedNetworks": [
+            "visa",
+            "masterCard",
+            "amex"
+        ],
+        "countryCode": "US",
+        "currencyCode": "USD"
+    }
+}

@@ -1,0 +1,74 @@
+name: Question / 질문
+description: Ask a question about Reactive Mind Map / Reactive Mind Map에 대한 질문을 합니다
+title: "[QUESTION] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your question! / 질문해주셔서 감사합니다!
+        
+        Please check the documentation first: [README](https://github.com/devpark435/reactive_mind_map/blob/main/README.md)
+        먼저 문서를 확인해주세요: [README](https://github.com/devpark435/reactive_mind_map/blob/main/README.md)
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question / 질문
+      description: What would you like to know? / 무엇을 알고 싶으신가요?
+      placeholder: Please describe your question in detail... / 질문을 자세히 설명해주세요...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category / 질문 카테고리
+      description: What category does your question belong to? / 질문이 어떤 카테고리에 속하나요?
+      options:
+        - Usage / 사용법
+        - Configuration / 설정
+        - Performance / 성능
+        - Styling / 스타일링
+        - Integration / 통합
+        - Best Practices / 모범 사례
+        - Troubleshooting / 문제 해결
+        - Other / 기타
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / 상황
+      description: Provide some context about what you're trying to achieve / 달성하려는 목표에 대한 상황을 설명해주세요
+      placeholder: I'm trying to... / 다음을 시도하고 있습니다...
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code Sample / 코드 샘플
+      description: If relevant, provide code that you're working with / 관련이 있다면, 작업 중인 코드를 제공해주세요
+      render: dart
+      placeholder: |
+        ```dart
+        // Your code here
+        ```
+
+  - type: input
+    id: version
+    attributes:
+      label: Package Version / 패키지 버전
+      description: What version of reactive_mind_map are you using? / 사용 중인 reactive_mind_map 버전은?
+      placeholder: e.g., 1.0.3
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Documentation Check / 문서 확인
+      description: Have you checked the following? / 다음을 확인하셨나요?
+      options:
+        - label: I have read the README / README를 읽었습니다
+          required: true
+        - label: I have checked the example code / 예제 코드를 확인했습니다
+        - label: I have searched existing issues / 기존 이슈를 검색했습니다 

@@ -1,0 +1,6 @@
+framework module NVEasySDK {
+  umbrella header "NVEasySDK.h"
+  export *
+
+  module * { export * }
+}

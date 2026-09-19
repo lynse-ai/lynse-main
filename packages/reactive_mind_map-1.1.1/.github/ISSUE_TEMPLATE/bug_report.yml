@@ -1,0 +1,111 @@
+name: Bug Report / 버그 리포트
+description: Report a bug in Reactive Mind Map / Reactive Mind Map의 버그를 신고합니다
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! / 버그를 신고해주셔서 감사합니다!
+        
+        Please fill out the following information to help us understand and fix the issue.
+        문제를 이해하고 수정할 수 있도록 다음 정보를 작성해주세요.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description / 버그 설명
+      description: A clear and concise description of what the bug is / 버그에 대한 명확하고 간결한 설명
+      placeholder: Describe what happened... / 무엇이 발생했는지 설명해주세요...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce / 재현 단계
+      description: Steps to reproduce the behavior / 버그를 재현하는 단계
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior / 예상 동작
+      description: A clear and concise description of what you expected to happen / 예상했던 동작에 대한 명확하고 간결한 설명
+      placeholder: What should have happened? / 무엇이 일어나야 했나요?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior / 실제 동작
+      description: A clear and concise description of what actually happened / 실제로 일어난 일에 대한 명확하고 간결한 설명
+      placeholder: What actually happened? / 실제로 무엇이 일어났나요?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Package Version / 패키지 버전
+      description: What version of reactive_mind_map are you using? / 사용 중인 reactive_mind_map 버전은?
+      placeholder: e.g., 1.0.3
+    validations:
+      required: true
+
+  - type: input
+    id: flutter-version
+    attributes:
+      label: Flutter Version / Flutter 버전
+      description: What version of Flutter are you using? / 사용 중인 Flutter 버전은?
+      placeholder: e.g., 3.24.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform / 플랫폼
+      description: What platform(s) does this bug affect? / 이 버그가 영향을 미치는 플랫폼은?
+      multiple: true
+      options:
+        - Android
+        - iOS
+        - Web
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code Sample / 코드 샘플
+      description: Please provide a minimal code sample that reproduces the issue / 문제를 재현하는 최소한의 코드 샘플을 제공해주세요
+      render: dart
+      placeholder: |
+        ```dart
+        // Your code here
+        ```
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs / 에러 로그
+      description: If applicable, add any error logs or stack traces / 해당되는 경우, 에러 로그나 스택 트레이스를 추가해주세요
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context / 추가 정보
+      description: Add any other context about the problem here / 문제에 대한 기타 정보를 여기에 추가해주세요
+      placeholder: Screenshots, device information, etc. / 스크린샷, 기기 정보 등 

@@ -1,0 +1,102 @@
+name: Feature Request / 기능 요청
+description: Suggest a new feature for Reactive Mind Map / Reactive Mind Map의 새로운 기능을 제안합니다
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! / 새로운 기능을 제안해주셔서 감사합니다!
+        
+        Please fill out the following information to help us understand your suggestion.
+        제안사항을 이해할 수 있도록 다음 정보를 작성해주세요.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 문제점
+      description: Is your feature request related to a problem? Please describe. / 기능 요청이 문제와 관련이 있나요? 설명해주세요.
+      placeholder: I'm always frustrated when... / 다음과 같은 상황에서 항상 불편함을 느낍니다...
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution / 제안하는 해결책
+      description: Describe the solution you'd like / 원하는 해결책을 설명해주세요
+      placeholder: I would like to see... / 다음과 같은 기능이 있었으면 좋겠습니다...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered / 고려한 대안
+      description: Describe any alternative solutions or features you've considered / 고려해본 다른 해결책이나 기능들을 설명해주세요
+      placeholder: A clear and concise description of any alternative solutions... / 다른 해결책들에 대한 명확하고 간결한 설명...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category / 기능 카테고리
+      description: What category does this feature belong to? / 이 기능은 어떤 카테고리에 속하나요?
+      options:
+        - Layout / 레이아웃
+        - Styling / 스타일링
+        - Animation / 애니메이션
+        - Interaction / 인터랙션
+        - Performance / 성능
+        - API / API
+        - Documentation / 문서화
+        - Other / 기타
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority / 우선순위
+      description: How important is this feature to you? / 이 기능이 얼마나 중요한가요?
+      options:
+        - Low / 낮음
+        - Medium / 보통
+        - High / 높음
+        - Critical / 매우 중요
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case / 사용 사례
+      description: Describe your specific use case for this feature / 이 기능에 대한 구체적인 사용 사례를 설명해주세요
+      placeholder: I want to use this feature to... / 이 기능을 다음과 같이 사용하고 싶습니다...
+    validations:
+      required: true
+
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Mockup or Example / 목업 또는 예시
+      description: If applicable, provide mockups, sketches, or examples / 해당되는 경우, 목업, 스케치 또는 예시를 제공해주세요
+      placeholder: You can attach images or provide links to examples... / 이미지를 첨부하거나 예시 링크를 제공해주세요...
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context / 추가 정보
+      description: Add any other context or screenshots about the feature request here / 기능 요청에 대한 기타 정보나 스크린샷을 여기에 추가해주세요
+      placeholder: Any additional information... / 추가 정보...
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution / 기여
+      description: Are you willing to contribute to this feature? / 이 기능에 기여할 의향이 있나요?
+      options:
+        - label: I would like to work on this feature / 이 기능 작업에 참여하고 싶습니다
+        - label: I can provide additional feedback during development / 개발 중 추가 피드백을 제공할 수 있습니다
+        - label: I can help with testing / 테스트를 도울 수 있습니다 

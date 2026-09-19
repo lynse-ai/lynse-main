@@ -1,0 +1,6 @@
+framework module NVEasyAudioProcess {
+  umbrella header "NVEasyAudioProcess.h"
+  export *
+
+  module * { export * }
+}
