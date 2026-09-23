@@ -1,18 +1,20 @@
 /// Xyrix 适配器（方案 A）：基于 flutter_blue_plus 在 Dart 层直实现 Xyrix BLE 协议。
 ///
-/// 协议要点（XyrixSDK-2/ble_sdk/docs/API_Reference.md）：
+/// 协议要点（XyrixSDK-2 文档 + 2026-09 真机联调实测）：
 /// - 服务/特征：Nordic UART（写 6e400002…，通知 6e400003…）
-/// - 帧格式：`FF 55 AA [len][cmd][data]`
-/// - 设备身份：广播 manufacturerData 中的 deviceSN
+/// - 帧格式：`FF 55 AA [len=N][cmd][data]`（长度字节 = 数据长度，帧总长 5+N）
+/// - 设备身份：广播 manufacturerData（companyId 0xABCD）载荷即 ASCII SN
+/// - 文件列表：`FF 55 AA 00 05` 起始帧 + 明文行（`路径 -字节 B -秒 s`）+ `FF 55 AA 00 2F` 结束帧
 ///
 /// TODO(厂商确认)：
-/// 1. 广播 manufacturerData 中 SN 的字节布局（当前按可配置偏移解析）
-/// 2. 实时音频（OPUS 录音 0x50 系列）回传帧格式
-/// 3. 文件传输响应/数据包的分帧细节（0x07/0x08 之后的数据流）
+/// 1. 实时音频（OPUS 录音 0x50 系列）回传帧格式
+/// 2. 文件传输响应/数据包的分帧细节（0x07/0x08 之后的数据流）
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dting/hardware/ble_device_adapter.dart';
 import 'package:dting/hardware/hardware_event.dart';
@@ -42,9 +44,11 @@ class XyrixAdapter extends BleDeviceAdapter {
   IOSink? _streamSink;
   File? _streamFile;
 
-  /// SN 在 manufacturerData 中的解析偏移（待厂商确认后调整）
-  static const int snOffset = 0;
-  static const int snLength = 8;
+  /// 文件列表收集状态：0x05 起始帧之后到 0x2F 结束帧之间是明文行
+  bool _collectingFileList = false;
+  final BytesBuilder _fileListRaw = BytesBuilder(copy: true);
+  Completer<List<RecordingFile>>? _fileListCompleter;
+  List<RecordingFile> _lastFileList = const [];
 
   /// Nordic UART Service
   static final Guid _serviceUuid =
@@ -122,14 +126,13 @@ class XyrixAdapter extends BleDeviceAdapter {
     );
   }
 
-  /// 从厂商数据解析 SN（TODO(厂商确认)：字节布局）
+  /// 从厂商数据解析 SN：companyId 0xABCD 的载荷即 ASCII SN
+  /// （真机实测广播载荷 `32 36 30 …` = "2606260101400084"）
   String? parseSerialNumber(DiscoveredDevice d) {
-    if (d.manufacturerData.length < snOffset + snLength) return null;
-    final hex = d.manufacturerData
-        .sublist(snOffset, snOffset + snLength)
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-    return hex.toUpperCase();
+    if (d.manufacturerData.isEmpty) return null;
+    final text = ascii.decode(d.manufacturerData, allowInvalid: true);
+    final sn = text.replaceAll(RegExp(r'[^!-~]'), '');
+    return sn.isEmpty ? null : sn;
   }
 
   @override
@@ -193,6 +196,11 @@ class XyrixAdapter extends BleDeviceAdapter {
       // 全部就绪后开启推流捕获（原始字节完整落盘），再发布 connected/ready
       await _openStreamCapture();
       debugPrint('[Xyrix] UART 就绪（write/notify 已订阅），时间已同步');
+      // SN 直接取自广播厂商数据（0xFF 设备号命令此版固件无响应，联调实测）
+      final sn = parseSerialNumber(device);
+      if (sn != null) {
+        _emit(DeviceInfoEvent(DeviceHardwareInfo(serialNumber: sn)));
+      }
       _emit(ConnectionStateEvent(device.deviceId, ConnectionPhase.connected));
       _emit(ConnectionStateEvent(device.deviceId, ConnectionPhase.ready));
     } on HardwareException {
@@ -211,8 +219,20 @@ class XyrixAdapter extends BleDeviceAdapter {
     } catch (_) {}
     _writeChar = null;
     _rxBuffer = Uint8List(0);
+    _resetFileListState();
     await _closeStreamCapture();
     _emit(ConnectionStateEvent(dev.remoteId.str, ConnectionPhase.disconnected));
+  }
+
+  /// 丢弃进行中的文件列表收集（断连/超时时调用）
+  void _resetFileListState() {
+    _collectingFileList = false;
+    _fileListRaw.clear();
+    final completer = _fileListCompleter;
+    _fileListCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(_lastFileList);
+    }
   }
 
   /// 打开推流捕获文件（连接成功后调用）
@@ -246,6 +266,7 @@ class XyrixAdapter extends BleDeviceAdapter {
     _device = null;
     _writeChar = null;
     _rxBuffer = Uint8List(0);
+    _resetFileListState();
     await _closeStreamCapture();
   }
 
@@ -267,21 +288,99 @@ class XyrixAdapter extends BleDeviceAdapter {
     // 2) 原始字节无条件打印：协议联调期间对照厂商文档用
     debugPrint('[Xyrix] 收到通知 ${value.length}B: '
         '${value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
-    // 3) 命令帧解析（控制面：电量/版本/录音状态等）
     final merged = Uint8List.fromList([..._rxBuffer, ...value]);
+    // 3) 文件列表收集模式：起始帧后的明文行不经过帧解析
+    if (_collectingFileList) {
+      _collectFileListChunk(merged);
+      return;
+    }
+    // 4) 命令帧解析（控制面：电量/版本/录音状态等）
     final (frames, rest) = XyrixFrameCodec.decode(merged);
     // 推流音频是非命令帧数据，残余缓冲只可能是断帧尾部；超限直接清空
     //（原始数据已在上面的捕获文件中，不丢失）
-    if (rest.length > 4096) {
-      _rxBuffer = Uint8List(0);
-    } else {
-      _rxBuffer = rest;
-    }
+    _rxBuffer = rest.length > 4096 ? Uint8List(0) : rest;
     for (final frame in frames) {
       debugPrint('[Xyrix] 解析帧 cmd=0x${frame.command.toRadixString(16)} '
           'data=${frame.data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
       _dispatchFrame(frame);
     }
+  }
+
+  /// 收集文件列表明文，直到 `FF 55 AA 00 2F` 结束帧出现。
+  /// 明文行格式（联调实测）：`0:/2026-09-21-09-57-34.wav -145976 B -3680 s\n`
+  void _collectFileListChunk(Uint8List chunk) {
+    var endIdx = -1;
+    for (var i = 0; i <= chunk.length - 5; i++) {
+      if (chunk[i] == 0xFF &&
+          chunk[i + 1] == 0x55 &&
+          chunk[i + 2] == 0xAA &&
+          chunk[i + 3] == 0x00 &&
+          chunk[i + 4] == XyrixCommands.commandAck) {
+        endIdx = i;
+        break;
+      }
+    }
+    if (endIdx < 0) {
+      _fileListRaw.add(chunk);
+      _rxBuffer = Uint8List(0);
+      // 兜底：结束帧丢失时防止无限累积
+      if (_fileListRaw.length > 512 * 1024) {
+        _finishFileList();
+      }
+      return;
+    }
+    if (endIdx > 0) {
+      _fileListRaw.add(chunk.sublist(0, endIdx));
+    }
+    _finishFileList();
+    // 结束帧之后若还有数据，交回正常帧解析
+    final tail = Uint8List.fromList(Uint8List.sublistView(chunk, endIdx));
+    final (frames, rest) = XyrixFrameCodec.decode(tail);
+    _rxBuffer = rest.length > 4096 ? Uint8List(0) : rest;
+    for (final frame in frames) {
+      _dispatchFrame(frame);
+    }
+  }
+
+  /// 解析收集到的明文并发布文件列表
+  void _finishFileList() {
+    _collectingFileList = false;
+    final text = utf8.decode(_fileListRaw.takeBytes(), allowMalformed: true);
+    final files = <RecordingFile>[];
+    for (final line in text.split('\n')) {
+      if (line.trim().isEmpty) continue;
+      final parsed = XyrixFrameCodec.parseFileListLine(line);
+      if (parsed == null) {
+        debugPrint('[Xyrix] 文件列表出现无法解析的行: ${line.trim()}');
+        continue;
+      }
+      final path = parsed.path;
+      final name = path.startsWith('0:/') ? path.substring(3) : path;
+      files.add(RecordingFile(
+        sn: files.length,
+        name: name,
+        sizeBytes: parsed.sizeBytes,
+        startTime: _parseFileNameTime(name),
+      ));
+    }
+    debugPrint('[Xyrix] 文件列表解析完成：${files.length} 个文件');
+    _lastFileList = files;
+    _emit(FileListEvent(files));
+    final completer = _fileListCompleter;
+    _fileListCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(files);
+    }
+  }
+
+  /// 文件名形如 `2026-09-21-09-57-34.wav`，内嵌录音开始时间
+  DateTime? _parseFileNameTime(String name) {
+    final m = RegExp(
+      r'^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})',
+    ).firstMatch(name);
+    if (m == null) return null;
+    return DateTime.tryParse(
+        '${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}');
   }
 
   void _dispatchFrame(XyrixFrame frame) {
@@ -295,14 +394,26 @@ class XyrixAdapter extends BleDeviceAdapter {
         }
         break;
       case XyrixCommands.queryVersion:
-        _emit(DeviceInfoEvent(DeviceHardwareInfo(
-          firmwareVersion: String.fromCharCodes(frame.data),
-        )));
+        if (frame.data.isEmpty) break;
+        final raw = String.fromCharCodes(frame.data);
+        // 响应形如 "2025/01/01-12:00:00 v2.0.13"（联调实测），展示末段版本号
+        final version = raw.trim().split(RegExp(r'\s+')).last;
+        _emit(DeviceInfoEvent(DeviceHardwareInfo(firmwareVersion: version)));
         break;
       case XyrixCommands.queryDeviceId:
+        // 联调实测此版固件对 0xFF 无响应；SN 改由广播厂商数据解析
         _emit(DeviceInfoEvent(DeviceHardwareInfo(
           serialNumber: String.fromCharCodes(frame.data),
         )));
+        break;
+      case XyrixCommands.fileList:
+        // 响应为 `FF 55 AA 00 05 + 明文行 + FF 55 AA 00 2F`（联调实测），
+        // 自本帧起进入明文收集，结束帧到达后统一解析
+        _collectingFileList = true;
+        _fileListRaw.clear();
+        break;
+      case XyrixCommands.commandAck:
+        // 命令完成 ACK（文件列表结束帧已在收集模式中拦截，不会到这里）
         break;
       case XyrixCommands.queryStorage:
         // TODO(厂商确认)：存储信息字节布局
@@ -320,7 +431,7 @@ class XyrixAdapter extends BleDeviceAdapter {
         _emit(RecordStateEvent(RecordState.paused));
         break;
       default:
-        // 其余响应/数据包（文件列表、传输数据等）在具体功能落地时按厂商文档解析
+        // 其余响应/数据包（传输数据等）在具体功能落地时按厂商文档解析
         break;
     }
   }
@@ -331,9 +442,9 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> queryDeviceInfo() async {
+    // 0xFF（蓝牙设备号）此版固件无响应，SN 在连接时取自广播厂商数据
     await sendCommand(XyrixCommands.queryBattery);
     await sendCommand(XyrixCommands.queryVersion);
-    await sendCommand(XyrixCommands.queryDeviceId);
     await sendCommand(XyrixCommands.queryStorage);
   }
 
@@ -374,10 +485,19 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<List<RecordingFile>> listFiles() async {
-    // TODO(厂商确认)：0x05 响应的分帧/编码（文件项字段布局），落地后解析
+    final completer = Completer<List<RecordingFile>>();
+    _fileListCompleter?.complete(_lastFileList);
+    _fileListCompleter = completer;
     await sendCommand(
         XyrixCommands.fileList, XyrixFrameCodec.pathData('0:/ .wav'));
-    return const [];
+    // 24 个文件实测约 2.5s 传完；超时则终止收集并回退最近一次结果
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _resetFileListState();
+        return _lastFileList;
+      },
+    );
   }
 
   @override

@@ -1,12 +1,15 @@
-/// Xyrix BLE 协议命令码表（来源：XyrixSDK-2/ble_sdk/docs/API_Reference.md §8）。
+/// Xyrix BLE 协议命令码表（来源：XyrixSDK-2 文档 §8 + 真机联调实测）。
 ///
-/// 帧格式：`FF 55 AA [长度 1B] [命令码 1B] [数据 N 字节]`，长度 = 1 + N（不含帧头）。
+/// 帧格式：`FF 55 AA [长度 1B] [命令码 1B] [数据 N 字节]`，长度 = N（数据字节数）。
 library;
 
 abstract final class XyrixCommands {
   // ---- 设备信息 ----
   /// 查询电池电量；响应 2 字节 [电量, 充电状态]
   static const int queryBattery = 0x01;
+
+  /// 命令完成 ACK（联调实测：每条响应帧后紧跟 `FF 55 AA 00 2F`）
+  static const int commandAck = 0x2F;
 
   /// 修改蓝牙名称（≤6 字节）
   static const int setBtName = 0x02;
