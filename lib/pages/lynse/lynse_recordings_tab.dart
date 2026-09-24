@@ -46,7 +46,8 @@ class _LynseRecordingsTabState extends State<LynseRecordingsTab> {
           final ext = e.path.toLowerCase();
           if (ext.endsWith('.mp3') ||
               ext.endsWith('.wav') ||
-              ext.endsWith('.m4a')) {
+              ext.endsWith('.m4a') ||
+              ext.endsWith('.opus')) {
             result.add(e);
           }
         }

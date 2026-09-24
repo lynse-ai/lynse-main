@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dting/config/config.dart';
 import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/service/permission_service.dart';
 import 'package:dting/utils/device_utils.dart';
@@ -25,7 +26,8 @@ extension DtingStoreExt on DtingStore {
         "true") {
       isLogin = true;
     }
-    if (!isLogin) {
+    // 跳过登录的临时联调模式下同样放行扫描（与 Config.debugSkipLogin 同步恢复）
+    if (!isLogin && !Config.debugSkipLogin) {
       print('还没有登录，不能搜索蓝牙设备');
       return;
     }

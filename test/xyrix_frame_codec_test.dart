@@ -116,6 +116,84 @@ void main() {
       expect(frames, isEmpty);
       expect(rest, [0xFF, 0x55, 0xAA, 0x03, 0x01, 0x62, 0x00]);
     });
+
+    test('坏长度帧头后面跟完整帧时重新同步（2026-09-24 真机抓包）', () {
+      // 真机实测：时间同步 ACK 前混入杂散帧头 `FF 55 AA`，长度被误读为 0xFF
+      // （需 260 字节永收不齐）。修复前：缓冲被此帧永久堵死，后续电量/版本/
+      // 文件列表响应全部丢失（表现为 UI 无电量/固件/音频文件，仅 SN 正常）。
+      // 修复后：跳过坏长度头，重新同步出 ACK + 电量帧。
+      final poison = [0xFF, 0x55, 0xAA, 0xFF, 0x55, 0xAA, 0x00, 0x2F];
+      final battery = [0xFF, 0x55, 0xAA, 0x02, 0x01, 0x5D, 0x00]; // 93%、未充电
+      final (frames, rest) = XyrixFrameCodec.decode(
+        Uint8List.fromList([...poison, ...battery, 0xFF, 0x55, 0xAA, 0x00, 0x2F]),
+      );
+      expect(frames.map((f) => f.command).toList(), [0x2F, 0x01, 0x2F]);
+      expect(frames[1].data, [0x5D, 0x00]);
+      expect(rest, isEmpty);
+    });
+
+    test('重同步不得破坏真正的跨通知半包等待', () {
+      // 电量帧前 5 字节先到（无内嵌帧头）→ 必须继续等待而不是误同步
+      final (f1, rest1) = XyrixFrameCodec.decode(
+        Uint8List.fromList([0xFF, 0x55, 0xAA, 0x02, 0x01]),
+      );
+      expect(f1, isEmpty);
+      expect(rest1, [0xFF, 0x55, 0xAA, 0x02, 0x01]);
+      // 补齐后半段后正常解出
+      final (f2, rest2) = XyrixFrameCodec.decode(
+        Uint8List.fromList([...rest1, 0x62, 0x00]),
+      );
+      expect(f2, hasLength(1));
+      expect(f2.first.data, [0x62, 0x00]);
+      expect(rest2, isEmpty);
+    });
+  });
+
+  group('真机会话重放（2026-09-24 11:09 抓包逐通知重放）', () {
+    // 当次会话 4 条通知的真实字节与顺序：8B 杂散帧头+ACK 先到，
+    // 电量/版本/存储后到。修复前：8B 的杂散头长度被读成 0xFF（需 260 字节），
+    // 接收缓冲从此堵死，后面三条响应全部丢失 → UI 无电量/固件。
+    final notifications = [
+      // 杂散帧头 + 0x2F ACK
+      [0xFF, 0x55, 0xAA, 0xFF, 0x55, 0xAA, 0x00, 0x2F],
+      // 电量 93%、未充电 + ACK
+      [0xFF, 0x55, 0xAA, 0x02, 0x01, 0x5D, 0x00, 0xFF, 0x55, 0xAA, 0x00, 0x2F],
+      // 版本串 27 字节 + 9 字节补零 + ACK
+      [
+        ...[0xFF, 0x55, 0xAA, 0x1B, 0x17],
+        ...'2025/01/01-12:00:00 v2.0.13'.codeUnits,
+        ...List.filled(9, 0x00),
+        0xFF, 0x55, 0xAA, 0x00, 0x2F,
+      ],
+      // 存储信息 8 字节 + ACK
+      [0xFF, 0x55, 0xAA, 0x08, 0x2E, 0x01, 0xD1, 0xD9, 0x00, 0x01, 0xC7, 0xF7,
+        0xC0, 0xFF, 0x55, 0xAA, 0x00, 0x2F],
+    ];
+
+    test('杂散帧头先到时整轮响应仍全部解析', () {
+      var buffer = Uint8List(0);
+      final commands = <int>[];
+      String? version;
+      for (final n in notifications) {
+        final merged = Uint8List.fromList([...buffer, ...n]);
+        final (frames, rest) = XyrixFrameCodec.decode(merged);
+        buffer = rest;
+        for (final f in frames) {
+          commands.add(f.command);
+          if (f.command == XyrixCommands.queryVersion && f.data.isNotEmpty) {
+            version = String.fromCharCodes(f.data);
+          }
+        }
+      }
+      expect(commands, containsAll(<int>[
+        XyrixCommands.commandAck,
+        XyrixCommands.queryBattery,
+        XyrixCommands.queryVersion,
+        XyrixCommands.queryStorage,
+      ]));
+      expect(version, '2025/01/01-12:00:00 v2.0.13');
+      expect(buffer, isEmpty);
+    });
   });
 
   group('parseFileListLine（真机抓包明文行）', () {

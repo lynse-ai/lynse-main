@@ -21,6 +21,7 @@ import 'package:dting/hardware/hardware_event.dart';
 import 'package:dting/hardware/models.dart';
 import 'package:dting/hardware/xyrix/xyrix_commands.dart';
 import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
+import 'package:dting/hardware/xyrix/xyrix_stream_parsers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -28,9 +29,6 @@ import 'package:path_provider/path_provider.dart';
 class XyrixAdapter extends BleDeviceAdapter {
   final StreamController<HardwareEvent> _events =
       StreamController<HardwareEvent>.broadcast();
-
-  /// 流式接收缓冲
-  Uint8List _rxBuffer = Uint8List(0);
 
   BluetoothDevice? _device;
   BluetoothCharacteristic? _writeChar;
@@ -44,11 +42,36 @@ class XyrixAdapter extends BleDeviceAdapter {
   IOSink? _streamSink;
   File? _streamFile;
 
-  /// 文件列表收集状态：0x05 起始帧之后到 0x2F 结束帧之间是明文行
-  bool _collectingFileList = false;
-  final BytesBuilder _fileListRaw = BytesBuilder(copy: true);
+  /// 文件列表收集 + 实时音频流解析（纯逻辑，见 xyrix_stream_parsers.dart）
+  late final XyrixNotificationRouter _router = XyrixNotificationRouter(
+    onFrame: _dispatchFrame,
+    onFileList: _onFileListParsed,
+    onOpusPacket: _onOpusPacket,
+  );
   Completer<List<RecordingFile>>? _fileListCompleter;
   List<RecordingFile> _lastFileList = const [];
+
+  /// 实时音频流（0x54 OPUS 推送）本地落盘状态
+  IOSink? _rtSink;
+  File? _rtFile;
+  int _rtPayloadBytes = 0;
+  int _rtPackets = 0;
+  Timer? _rtIdleTimer;
+
+  /// BLE 文件下载状态机：0x07 准备 + 0x08 启动后设备持续推送文件数据，
+  /// 数据包分帧格式厂商文档未给出（联调中按原始字节落盘 + 计数推进度），
+  /// 完成判定 = 累计字节达到文件列表上报的 sizeBytes。
+  bool _downloading = false;
+  IOSink? _dlSink;
+  File? _dlOutFile;
+  RecordingFile? _dlSource;
+  int _dlReceived = 0;
+  int _dlTotalBytes = 0;
+  bool _dlFirstPacketLogged = false;
+  DateTime _dlStartTime = DateTime.now();
+  DateTime _dlLastProgressEmit = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _dlStallTimer;
+  Completer<void>? _dlCompleter;
 
   /// Nordic UART Service
   static final Guid _serviceUuid =
@@ -65,9 +88,9 @@ class XyrixAdapter extends BleDeviceAdapter {
   @override
   CapabilityManifest get capabilities => const CapabilityManifest({
         HardwareCapability.deleteFile,
-        HardwareCapability.wifiTransfer,
         HardwareCapability.addMark,
         // firmwareUpgrade：无独立 OTA API，走文件传输通道，暂不开放
+        // wifiTransfer：热点+TCP 快传未接入，暂不声明 → 控制层自动选 BLE 通道
       });
 
   @override
@@ -149,6 +172,9 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> connect(DiscoveredDevice device, {String? authKey}) async {
+    // 重连可能发生在同一适配器实例上：清掉上一次会话残留的接收缓冲/
+    // 文件列表收集状态，避免旧字节污染新链路的解析
+    _resetFileListState();
     _emit(ConnectionStateEvent(device.deviceId, ConnectionPhase.connecting));
     final dev = BluetoothDevice.fromId(device.deviceId);
     _device = dev;
@@ -159,8 +185,7 @@ class XyrixAdapter extends BleDeviceAdapter {
       switch (state) {
         case BluetoothConnectionState.disconnected:
           _writeChar = null;
-          _rxBuffer = Uint8List(0);
-          _emit(
+                _emit(
               ConnectionStateEvent(device.deviceId, ConnectionPhase.disconnected));
           break;
         default:
@@ -218,16 +243,15 @@ class XyrixAdapter extends BleDeviceAdapter {
       await dev.disconnect();
     } catch (_) {}
     _writeChar = null;
-    _rxBuffer = Uint8List(0);
     _resetFileListState();
+    await _closeRealtimeCapture();
     await _closeStreamCapture();
     _emit(ConnectionStateEvent(dev.remoteId.str, ConnectionPhase.disconnected));
   }
 
   /// 丢弃进行中的文件列表收集（断连/超时时调用）
   void _resetFileListState() {
-    _collectingFileList = false;
-    _fileListRaw.clear();
+    _router.reset();
     final completer = _fileListCompleter;
     _fileListCompleter = null;
     if (completer != null && !completer.isCompleted) {
@@ -260,12 +284,15 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> disconnect() async {
+    if (_downloading) {
+      await _finishDownload(TransferState.failed);
+    }
+    await _closeRealtimeCapture();
     await _notifySub?.cancel();
     _notifySub = null;
     await _device?.disconnect();
     _device = null;
     _writeChar = null;
-    _rxBuffer = Uint8List(0);
     _resetFileListState();
     await _closeStreamCapture();
   }
@@ -279,6 +306,8 @@ class XyrixAdapter extends BleDeviceAdapter {
     if (char == null) {
       throw HardwareException(HardwareErrorCode.connectionLost, '设备未连接');
     }
+    debugPrint('[Xyrix] 发送命令 0x${command.toRadixString(16).padLeft(2, '0')} '
+        'data=${data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
     await char.write(XyrixFrameCodec.encode(command, data));
   }
 
@@ -288,81 +317,18 @@ class XyrixAdapter extends BleDeviceAdapter {
     // 2) 原始字节无条件打印：协议联调期间对照厂商文档用
     debugPrint('[Xyrix] 收到通知 ${value.length}B: '
         '${value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
-    final merged = Uint8List.fromList([..._rxBuffer, ...value]);
-    // 3) 文件列表收集模式：起始帧后的明文行不经过帧解析
-    if (_collectingFileList) {
-      _collectFileListChunk(merged);
+    // 3) 下载进行中：字节全部计入目标文件（分帧格式未知，先原样落盘），
+    //    控制帧解析暂停——随机数据可能碰巧命中命令码，干扰 UI 状态
+    if (_downloading) {
+      _onDownloadBytes(value);
       return;
     }
-    // 4) 命令帧解析（控制面：电量/版本/录音状态等）
-    final (frames, rest) = XyrixFrameCodec.decode(merged);
-    // 推流音频是非命令帧数据，残余缓冲只可能是断帧尾部；超限直接清空
-    //（原始数据已在上面的捕获文件中，不丢失）
-    _rxBuffer = rest.length > 4096 ? Uint8List(0) : rest;
-    for (final frame in frames) {
-      debugPrint('[Xyrix] 解析帧 cmd=0x${frame.command.toRadixString(16)} '
-          'data=${frame.data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
-      _dispatchFrame(frame);
-    }
+    // 4) 命令帧 / 文件列表 / 实时音频流统一由路由器分发
+    _router.feed(value);
   }
 
-  /// 收集文件列表明文，直到 `FF 55 AA 00 2F` 结束帧出现。
-  /// 明文行格式（联调实测）：`0:/2026-09-21-09-57-34.wav -145976 B -3680 s\n`
-  void _collectFileListChunk(Uint8List chunk) {
-    var endIdx = -1;
-    for (var i = 0; i <= chunk.length - 5; i++) {
-      if (chunk[i] == 0xFF &&
-          chunk[i + 1] == 0x55 &&
-          chunk[i + 2] == 0xAA &&
-          chunk[i + 3] == 0x00 &&
-          chunk[i + 4] == XyrixCommands.commandAck) {
-        endIdx = i;
-        break;
-      }
-    }
-    if (endIdx < 0) {
-      _fileListRaw.add(chunk);
-      _rxBuffer = Uint8List(0);
-      // 兜底：结束帧丢失时防止无限累积
-      if (_fileListRaw.length > 512 * 1024) {
-        _finishFileList();
-      }
-      return;
-    }
-    if (endIdx > 0) {
-      _fileListRaw.add(chunk.sublist(0, endIdx));
-    }
-    _finishFileList();
-    // 结束帧之后若还有数据，交回正常帧解析
-    final tail = Uint8List.fromList(Uint8List.sublistView(chunk, endIdx));
-    final (frames, rest) = XyrixFrameCodec.decode(tail);
-    _rxBuffer = rest.length > 4096 ? Uint8List(0) : rest;
-    for (final frame in frames) {
-      _dispatchFrame(frame);
-    }
-  }
-
-  /// 解析收集到的明文并发布文件列表
-  void _finishFileList() {
-    _collectingFileList = false;
-    final text = utf8.decode(_fileListRaw.takeBytes(), allowMalformed: true);
-    final files = <RecordingFile>[];
-    for (final line in text.split('\n')) {
-      if (line.trim().isEmpty) continue;
-      final parsed = XyrixFrameCodec.parseFileListLine(line);
-      if (parsed == null) {
-        debugPrint('[Xyrix] 文件列表出现无法解析的行: ${line.trim()}');
-        continue;
-      }
-      final path = parsed.path;
-      final name = path.startsWith('0:/') ? path.substring(3) : path;
-      files.add(RecordingFile(
-        sn: files.length,
-        name: name,
-        sizeBytes: parsed.sizeBytes,
-        startTime: _parseFileNameTime(name),
-      ));
-    }
+  /// 文件列表解析完成：发布事件并唤醒 listFiles() 等待方
+  void _onFileListParsed(List<RecordingFile> files) {
     debugPrint('[Xyrix] 文件列表解析完成：${files.length} 个文件');
     _lastFileList = files;
     _emit(FileListEvent(files));
@@ -373,14 +339,62 @@ class XyrixAdapter extends BleDeviceAdapter {
     }
   }
 
-  /// 文件名形如 `2026-09-21-09-57-34.wav`，内嵌录音开始时间
-  DateTime? _parseFileNameTime(String name) {
-    final m = RegExp(
-      r'^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})',
-    ).firstMatch(name);
-    if (m == null) return null;
-    return DateTime.tryParse(
-        '${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}');
+  // ------------------------------------------------------------------
+  // 实时音频流（0x54 OPUS 推送）本地落盘
+  // ------------------------------------------------------------------
+
+  void _onOpusPacket(XyrixOpusPacket packet) {
+    final sink = _rtSink;
+    if (sink == null) {
+      // 路由器已在 0x54 标记帧时处于流模式；正常不会到这，防御一下
+      _openRealtimeCapture();
+    }
+    _rtSink?.add(packet.payload);
+    _rtPayloadBytes += packet.payload.length;
+    _rtPackets++;
+    _rtIdleTimer?.cancel();
+    // 设备端停止/异常断流时兜底收尾
+    _rtIdleTimer = Timer(const Duration(seconds: 8), () {
+      _closeRealtimeCapture();
+    });
+  }
+
+  Future<void> _openRealtimeCapture() async {
+    if (_rtSink != null) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+      _rtFile = File('${dir.path}/xyrix_rt_$ts.opus');
+      _rtSink = _rtFile!.openWrite();
+      _rtPayloadBytes = 0;
+      _rtPackets = 0;
+      debugPrint('[Xyrix] 实时音频捕获开始: ${_rtFile!.path}');
+    } catch (e) {
+      debugPrint('[Xyrix] 打开实时捕获失败: $e');
+    }
+  }
+
+  Future<void> _closeRealtimeCapture() async {
+    _rtIdleTimer?.cancel();
+    _rtIdleTimer = null;
+    _router.resetRealtime();
+    final sink = _rtSink;
+    final file = _rtFile;
+    final bytes = _rtPayloadBytes;
+    final packets = _rtPackets;
+    _rtSink = null;
+    _rtFile = null;
+    _rtPayloadBytes = 0;
+    _rtPackets = 0;
+    if (sink == null || file == null) return;
+    try {
+      await sink.flush();
+      await sink.close();
+    } catch (_) {}
+    debugPrint('[Xyrix] 实时音频落盘完成 $packets 包 / $bytes B → ${file.path}');
+    if (bytes > 0) {
+      _emit(FileImportedEvent(ImportedRecording(filePath: file.path)));
+    }
   }
 
   void _dispatchFrame(XyrixFrame frame) {
@@ -405,12 +419,6 @@ class XyrixAdapter extends BleDeviceAdapter {
         _emit(DeviceInfoEvent(DeviceHardwareInfo(
           serialNumber: String.fromCharCodes(frame.data),
         )));
-        break;
-      case XyrixCommands.fileList:
-        // 响应为 `FF 55 AA 00 05 + 明文行 + FF 55 AA 00 2F`（联调实测），
-        // 自本帧起进入明文收集，结束帧到达后统一解析
-        _collectingFileList = true;
-        _fileListRaw.clear();
         break;
       case XyrixCommands.commandAck:
         // 命令完成 ACK（文件列表结束帧已在收集模式中拦截，不会到这里）
@@ -450,7 +458,11 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> startRecord(RecordScene mode) async {
-    await sendCommand(XyrixCommands.recordStart);
+    // 联调探测：会议=0x1B 仅设备端存储录音；通话=0x24 边录音边蓝牙推流，
+    // 用于对比两种模式下设备是否推送实时音频流、推流字节格式如何
+    await sendCommand(mode == RecordScene.call
+        ? XyrixCommands.recordWithTransfer
+        : XyrixCommands.recordStart);
     // 厂商协议无命令确认帧：GATT 写入成功即视为已生效（录音中设备会直接
     // 开始推送数据流），否则 UI 永远等不到状态回调
     _emit(RecordStateEvent(RecordState.recording));
@@ -459,6 +471,7 @@ class XyrixAdapter extends BleDeviceAdapter {
   @override
   Future<void> pauseRecord() async {
     await sendCommand(XyrixCommands.recordPause);
+    await _closeRealtimeCapture();
     _emit(RecordStateEvent(RecordState.paused));
   }
 
@@ -471,7 +484,15 @@ class XyrixAdapter extends BleDeviceAdapter {
   @override
   Future<void> stopRecord() async {
     await sendCommand(XyrixCommands.recordSave);
+    await _closeRealtimeCapture();
     _emit(RecordStateEvent(RecordState.idle));
+    // 设备保存 WAV 需要一点时间，稍后自动刷新设备文件列表，
+    // 新录音不经手动下拉就能出现在列表里
+    Timer(const Duration(seconds: 2), () {
+      listFiles().then((files) {
+        debugPrint('[Xyrix] 录音停止后自动刷新列表：${files.length} 个文件');
+      }).catchError((_) {});
+    });
   }
 
   @override
@@ -506,14 +527,153 @@ class XyrixAdapter extends BleDeviceAdapter {
     TransferTransport transport = TransferTransport.ble,
     bool autoDelete = false,
   }) async {
-    // TODO(厂商确认)：杰理/Telink 双芯片分支与数据包流解析
-    await sendCommand(
-        XyrixCommands.transferPrepareJl, XyrixFrameCodec.pathData(file.name));
-    await sendCommand(XyrixCommands.transferStartJl);
+    if (transport == TransferTransport.wifi) {
+      throw HardwareException(
+        HardwareErrorCode.unsupportedCapability,
+        'Xyrix WiFi 快传（热点+TCP）未接入，请走 BLE 通道',
+      );
+    }
+    if (_downloading) {
+      throw HardwareException(HardwareErrorCode.resourceBusy, '已有下载进行中');
+    }
+    if (_writeChar == null) {
+      throw HardwareException(HardwareErrorCode.connectionLost, '设备未连接');
+    }
+    final completer = Completer<void>();
+    _dlCompleter = completer;
+    _downloading = true;
+    _dlSource = file;
+    _dlReceived = 0;
+    _dlTotalBytes = file.sizeBytes;
+    _dlFirstPacketLogged = false;
+    _dlStartTime = DateTime.now();
+    _dlLastProgressEmit = DateTime.fromMillisecondsSinceEpoch(0);
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      _dlOutFile = File('${dir.path}/xyrix_dl_${file.name}');
+      _dlSink = _dlOutFile!.openWrite();
+      _emitDownloadProgress(TransferState.transferring, force: true);
+      // 0x07 数据 = 路径 + 4 字节大端文件大小（对齐 0x46「路径 hex + 4 字节
+      // 大端断点」的编码习惯；文档只写「绝对路径 + 文件大小」未给布局）
+      final pathBytes = utf8.encode('0:/${file.name}');
+      final size = file.sizeBytes;
+      final data = BytesBuilder()..add(pathBytes);
+      for (final shift in const [24, 16, 8, 0]) {
+        data.addByte((size >> shift) & 0xFF);
+      }
+      await sendCommand(XyrixCommands.transferPrepareJl, data.toBytes());
+      await sendCommand(XyrixCommands.transferStartJl);
+      _armStallWatchdog();
+    } catch (e) {
+      await _finishDownload(TransferState.failed);
+      rethrow;
+    }
+    return completer.future;
+  }
+
+  /// 下载中收到设备数据：原样写入目标文件并按字节推进度。
+  /// 完成判定 = 累计字节达到列表上报的 sizeBytes（文件大小是已知量）。
+  void _onDownloadBytes(List<int> value) {
+    _dlSink?.add(value);
+    _dlReceived += value.length;
+    _dlStallTimer?.cancel();
+    _armStallWatchdog();
+    if (!_dlFirstPacketLogged) {
+      _dlFirstPacketLogged = true;
+      debugPrint('[Xyrix] 首个数据包 ${value.length}B: '
+          '${value.take(48).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+    }
+    if (_dlTotalBytes > 0 && _dlReceived >= _dlTotalBytes) {
+      _finishDownload(TransferState.completed);
+    } else {
+      _emitDownloadProgress(TransferState.transferring);
+    }
+  }
+
+  void _emitDownloadProgress(TransferState state, {bool force = false}) {
+    final now = DateTime.now();
+    if (!force && now.difference(_dlLastProgressEmit) < const Duration(milliseconds: 250)) {
+      return;
+    }
+    _dlLastProgressEmit = now;
+    final total = _dlTotalBytes;
+    final received = _dlReceived;
+    final elapsedSec =
+        now.difference(_dlStartTime).inMilliseconds / 1000.0;
+    final speedKbps = elapsedSec > 0.2 ? (received / 1024 / elapsedSec).round() : 0;
+    _emit(TransferProgressEvent(
+      TransferProgress(
+        state: state,
+        receivedBytes: received,
+        totalBytes: total,
+        totalPacket: total > 0 ? (total / 512).ceil() : 1,
+        currentPacket: total > 0 ? (received / 512).ceil() : 0,
+        speedKbps: speedKbps,
+      ),
+      fileSn: _dlSource?.sn,
+    ));
+  }
+
+  Future<void> _finishDownload(TransferState endState) async {
+    _dlStallTimer?.cancel();
+    _dlStallTimer = null;
+    _downloading = false;
+    try {
+      await _dlSink?.flush();
+      await _dlSink?.close();
+    } catch (_) {}
+    final outFile = _dlOutFile;
+    final source = _dlSource;
+    final received = _dlReceived;
+    _dlSink = null;
+    _dlOutFile = null;
+    _dlSource = null;
+    debugPrint('[Xyrix] 下载结束 state=$endState received=$received/'
+        'expected=$_dlTotalBytes file=${outFile?.path}');
+    _emitDownloadProgress(endState, force: true);
+    if (endState == TransferState.completed &&
+        outFile != null &&
+        source != null) {
+      _emit(FileImportedEvent(ImportedRecording(
+        filePath: outFile.path,
+        recordStartTime: source.startTime,
+        fileSn: source.sn,
+      )));
+    }
+    if (endState == TransferState.failed && outFile != null && received == 0) {
+      // 一个字节都没收到就失败：清掉空文件避免留垃圾
+      try {
+        await outFile.delete();
+      } catch (_) {}
+    }
+    final completer = _dlCompleter;
+    _dlCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
+  /// 数据断流看门狗：连续 15 秒无通知视为传输中断。
+  /// （不按总时长超时——大文件在 BLE 上可能要传几十分钟。）
+  void _armStallWatchdog() {
+    _dlStallTimer?.cancel();
+    _dlStallTimer = Timer(const Duration(seconds: 15), () {
+      if (!_downloading) return;
+      debugPrint('[Xyrix] 下载断流 15s，终止（已收 $_dlReceived/$_dlTotalBytes）');
+      _finishDownload(TransferState.failed);
+      if (_writeChar != null) {
+        sendCommand(XyrixCommands.bleTransferStop).catchError((_) {});
+      }
+    });
   }
 
   @override
-  Future<void> cancelDownload() => sendCommand(XyrixCommands.bleTransferStop);
+  Future<void> cancelDownload() async {
+    if (_downloading) {
+      await _finishDownload(TransferState.cancelled);
+    }
+    await sendCommand(XyrixCommands.bleTransferStop);
+  }
 
   @override
   Future<void> deleteFile(RecordingFile file) => sendCommand(
@@ -532,6 +692,8 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> dispose() async {
+    _dlStallTimer?.cancel();
+    _rtIdleTimer?.cancel();
     await _scanSub?.cancel();
     await _connSub?.cancel();
     await _notifySub?.cancel();

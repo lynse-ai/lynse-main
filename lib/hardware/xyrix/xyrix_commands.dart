@@ -96,5 +96,10 @@ abstract final class XyrixCommands {
   static const int opusPause = 0x51;
   static const int opusResume = 0x52;
   static const int opusEnd = 0x53;
+
+  /// OPUS 实时数据推送标记帧（0x54，真机抓包实证）：`FF 55 AA 00 54` 后跟
+  /// 自描述数据包 `[2B 长度][4B 序列号][载荷][2B CRC]`；文档未列出此命令码
+  static const int opusData = 0x54;
+
   static const int opusDiscard = 0x55;
 }

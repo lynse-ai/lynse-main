@@ -10,6 +10,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 /// 解析出的一帧
 class XyrixFrame {
   final int command;
@@ -57,16 +59,7 @@ abstract final class XyrixFrameCodec {
     final frames = <XyrixFrame>[];
     var offset = 0;
     while (true) {
-      // 找帧头
-      var headIdx = -1;
-      for (var i = offset; i <= buffer.length - 3; i++) {
-        if (buffer[i] == header[0] &&
-            buffer[i + 1] == header[1] &&
-            buffer[i + 2] == header[2]) {
-          headIdx = i;
-          break;
-        }
-      }
+      final headIdx = _findHeader(buffer, offset);
       if (headIdx < 0) {
         break;
       }
@@ -78,9 +71,19 @@ abstract final class XyrixFrameCodec {
       final dataLen = buffer[headIdx + 3];
       final frameTotal = 5 + dataLen;
       if (buffer.length - headIdx < frameTotal) {
-        // 帧未收完整
-        offset = headIdx;
-        break;
+        // 帧未收完整。但若后面已出现下一个帧头，说明当前长度字节是坏的
+        // （真机实测：时间同步 ACK 前混入杂散帧头 `FF 55 AA`，长度被误读为
+        // 0xFF → 需 260 字节永收不齐 → 整条解析流被堵死，后续电量/版本/
+        // 文件列表响应全部丢失）。跳到下一个帧头重新同步。
+        final nextHead = _findHeader(buffer, headIdx + 1);
+        if (nextHead < 0) {
+          offset = headIdx;
+          break;
+        }
+        debugPrint('[Xyrix] 坏长度字节 0x${dataLen.toRadixString(16)}，'
+            '在 +$nextHead 处重新同步');
+        offset = nextHead;
+        continue;
       }
       final cmd = buffer[headIdx + 4];
       final data = Uint8List.sublistView(
@@ -95,6 +98,17 @@ abstract final class XyrixFrameCodec {
         ? Uint8List(0)
         : Uint8List.sublistView(buffer, offset);
     return (frames, Uint8List.fromList(rest));
+  }
+
+  static int _findHeader(Uint8List buffer, int from) {
+    for (var i = from; i <= buffer.length - 3; i++) {
+      if (buffer[i] == header[0] &&
+          buffer[i + 1] == header[1] &&
+          buffer[i + 2] == header[2]) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /// 组「同步时间」数据：4 字节大端 Unix 时间戳

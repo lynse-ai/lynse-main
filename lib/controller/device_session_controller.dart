@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dting/hardware/hardware_kit.dart';
 import 'package:dting/utils/local_database.dart';
@@ -20,6 +21,9 @@ class DeviceSessionController extends GetxController {
     Get.put(c, permanent: true);
     return c;
   }
+
+  /// 最近一次成功连接的设备（json：vendorId/deviceId/name），供启动自动重连
+  static const String _lastDeviceKey = 'lastHwDeviceJson';
 
   late final NeviewAdapter neview;
   late final XyrixAdapter xyrix;
@@ -164,6 +168,52 @@ class DeviceSessionController extends GetxController {
     await active?.connect(device, authKey: key);
     connectedDevice.value = device;
     await queryDeviceInfo();
+    // 记住最近连接的设备：下次进外壳页自动重连（不经扫描，按系统设备
+    // 标识直连，扫描列表刷不出来时也能连上）
+    LocalDataBase().basicBox!.put(
+      _lastDeviceKey,
+      jsonEncode({
+        'vendorId': device.vendorId,
+        'deviceId': device.deviceId,
+        'name': device.name,
+      }),
+    );
+  }
+
+  /// 自动重连上次连接的设备。iOS 对连过的外设有系统级缓存，
+  /// 直连不需要设备正在广播；设备休眠/没电时会以超时失败告终。
+  Future<void> autoReconnect() async {
+    if (connectionPhase.value.isUsable && connectedDevice.value != null) {
+      return;
+    }
+    final raw = LocalDataBase().basicBox!.get(_lastDeviceKey)?.toString();
+    if (raw == null || raw.isEmpty) return;
+    Map<String, dynamic> map;
+    try {
+      map = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+    final vendorId = map['vendorId'] as String?;
+    final deviceId = map['deviceId'] as String?;
+    if (vendorId == null || deviceId == null) return;
+    if (registry.byVendor(vendorId) == null) return;
+    final device = DiscoveredDevice(
+      vendorId: vendorId,
+      deviceId: deviceId,
+      name: (map['name'] as String?) ?? '上次设备',
+      rssi: 0,
+    );
+    try {
+      await connect(device);
+      Get.snackbar('已自动连接', device.name, snackPosition: SnackPosition.TOP);
+    } catch (e) {
+      Get.snackbar(
+        '自动重连失败',
+        '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
+        snackPosition: SnackPosition.TOP,
+      );
+    }
   }
 
   Future<void> disconnect() async {

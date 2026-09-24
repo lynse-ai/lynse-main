@@ -32,6 +32,13 @@ class _LynseShellPageState extends State<LynseShellPage> {
   static const _titles = ['主页', '设备', '记录'];
 
   @override
+  void initState() {
+    super.initState();
+    // 进入外壳页自动重连上次连接的设备（不经扫描，直连失败不影响手动流程）
+    DeviceSessionController.instance.autoReconnect();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = context.lynse;
     return Scaffold(
