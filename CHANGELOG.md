@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### New Features
+
+- 音频外传快传（Xyrix）：点击设备文件卡片即触发「BLE 开热点 → 手机连设备热点 → TCP 直传」，
+  传输完成自动导入记录页并清理链路；建链阶段与传输进度均有 UI 反馈
+- 设备文件列表体验：连接成功后自动拉取一次列表；停止录音后按 2s/6s/12s 轮询刷新
+  （适配长录音保存耗时）；刷新超时有明确错误提示
+- iOS 原生热点通道（NEHotspotConfigurationManager，dting/hotspot），
+  Info.plist 增加本地网络权限描述
+
+### Changed
+
+- Xyrix 设备能力清单正式声明 wifiTransfer，控制层自动选择 WiFi 快传通道
+- 设备文件列表点击动作改为「快传」（WiFi 通道），BLE 通道保留为回退路径
+
 ## 1.2.0 (2026-09-24)
 
 ### New Features

@@ -45,6 +45,7 @@ class DeviceSessionController extends GetxController {
   final recordScene = RecordScene.meeting.obs;
   final deviceFiles = <RecordingFile>[].obs;
   final transferProgress = Rxn<TransferProgress>();
+  final wifiStatus = Rxn<WifiTransferStatus>();
   final firmwareEvent = Rxn<FirmwareEvent>();
   final lastImported = Rxn<ImportedRecording>();
   final lastError = Rxn<String>();
@@ -130,7 +131,8 @@ class DeviceSessionController extends GetxController {
       case HardwareErrorEvent(:final code, :final message):
         lastError.value = '$code $message';
         break;
-      case WifiStatusEvent():
+      case WifiStatusEvent(:final status):
+        wifiStatus.value = status;
         break;
     }
   }

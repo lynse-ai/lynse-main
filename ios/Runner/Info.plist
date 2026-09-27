@@ -105,6 +105,8 @@
 	<string>需要访问您的位置信息以扫描蓝牙设备</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>蓝牙扫描灵斯记硬件需要位置信息权限</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>音频外传快传需要通过设备热点在本地网络中高速传输录音文件</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>microphone</string>
 	<key>NSMotionUsageDescription</key>

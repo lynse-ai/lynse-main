@@ -19,9 +19,11 @@ import 'dart:typed_data';
 import 'package:dting/hardware/ble_device_adapter.dart';
 import 'package:dting/hardware/hardware_event.dart';
 import 'package:dting/hardware/models.dart';
+import 'package:dting/hardware/xyrix/hotspot_connector.dart';
 import 'package:dting/hardware/xyrix/xyrix_commands.dart';
 import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
 import 'package:dting/hardware/xyrix/xyrix_stream_parsers.dart';
+import 'package:dting/hardware/xyrix/xyrix_wifi_transfer.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -50,6 +52,11 @@ class XyrixAdapter extends BleDeviceAdapter {
   );
   Completer<List<RecordingFile>>? _fileListCompleter;
   List<RecordingFile> _lastFileList = const [];
+
+  /// 录音停止后的列表轮询重试（设备保存 WAV 耗时随录音时长增长）
+  Timer? _listRefreshTimer;
+  int _listRefreshAttempt = 0;
+  int _listRefreshBaseCount = 0;
 
   /// 实时音频流（0x54 OPUS 推送）本地落盘状态
   IOSink? _rtSink;
@@ -90,8 +97,12 @@ class XyrixAdapter extends BleDeviceAdapter {
         HardwareCapability.deleteFile,
         HardwareCapability.addMark,
         // firmwareUpgrade：无独立 OTA API，走文件传输通道，暂不开放
-        // wifiTransfer：热点+TCP 快传未接入，暂不声明 → 控制层自动选 BLE 通道
+        HardwareCapability.wifiTransfer,
       });
+
+  /// 音频外传快传会话（WiFi 热点 + TCP），同一时刻至多一个
+  XyrixWifiTransferSession? _wifiTransfer;
+  final HotspotConnector _hotspotConnector = MethodChannelHotspotConnector();
 
   @override
   Stream<HardwareEvent> get events => _events.stream;
@@ -228,6 +239,14 @@ class XyrixAdapter extends BleDeviceAdapter {
       }
       _emit(ConnectionStateEvent(device.deviceId, ConnectionPhase.connected));
       _emit(ConnectionStateEvent(device.deviceId, ConnectionPhase.ready));
+      // 连接即拉取一次设备文件列表：不做这步，用户必须手动点刷新才能看到
+      // 设备内已有录音（录音停止后的自动刷新只覆盖本次新录音）
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (_writeChar == null || _downloading) return;
+        listFiles().then((files) {
+          debugPrint('[Xyrix] 连接后拉取文件列表：${files.length} 个文件');
+        }).catchError((_) {});
+      });
     } on HardwareException {
       await _abortConnection(dev);
       rethrow;
@@ -287,6 +306,7 @@ class XyrixAdapter extends BleDeviceAdapter {
     if (_downloading) {
       await _finishDownload(TransferState.failed);
     }
+    _listRefreshTimer?.cancel();
     await _closeRealtimeCapture();
     await _notifySub?.cancel();
     _notifySub = null;
@@ -438,8 +458,24 @@ class XyrixAdapter extends BleDeviceAdapter {
       case XyrixCommands.opusPause:
         _emit(RecordStateEvent(RecordState.paused));
         break;
+      case XyrixCommands.openHotspot:
+      case XyrixCommands.openHotspotTcp:
+        // 设备对「开热点」的响应：预期携带 SSID/密码（格式待厂商文档确认，
+        // 宽松解析 + 原始字节日志，真机联调后精化）
+        debugPrint('[Xyrix] 热点响应帧 data='
+            '${frame.data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')} '
+            'ascii="${ascii.decode(frame.data, allowInvalid: true)}"');
+        _wifiTransfer?.onHotspotCredentialsFrame(frame.data);
+        break;
+      case XyrixCommands.closeWifi:
+      case XyrixCommands.wifiTransferStop:
+        // 收尾命令的回执，无需处理
+        break;
       default:
-        // 其余响应/数据包（传输数据等）在具体功能落地时按厂商文档解析
+        // 联调期未知命令帧全量打印：热点凭证等未确认格式的响应都从这里暴露
+        debugPrint('[Xyrix] 未处理帧 cmd=0x${frame.command.toRadixString(16).padLeft(2, '0')} '
+            'len=${frame.data.length} '
+            'data=${frame.data.take(32).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
         break;
     }
   }
@@ -486,13 +522,34 @@ class XyrixAdapter extends BleDeviceAdapter {
     await sendCommand(XyrixCommands.recordSave);
     await _closeRealtimeCapture();
     _emit(RecordStateEvent(RecordState.idle));
-    // 设备保存 WAV 需要一点时间，稍后自动刷新设备文件列表，
-    // 新录音不经手动下拉就能出现在列表里
-    Timer(const Duration(seconds: 2), () {
-      listFiles().then((files) {
-        debugPrint('[Xyrix] 录音停止后自动刷新列表：${files.length} 个文件');
-      }).catchError((_) {});
-    });
+    // 设备保存 WAV 耗时随录音时长增长（十几分钟的录音保存可能远超 2 秒），
+    // 固定延迟单次刷新会拿不到新文件：按 2s/6s/12s 轮询，列表出现新文件
+    // 或三次跑完为止
+    _schedulePostRecordListRefresh();
+  }
+
+  void _schedulePostRecordListRefresh() {
+    _listRefreshTimer?.cancel();
+    _listRefreshAttempt = 0;
+    _listRefreshBaseCount = _lastFileList.length;
+    void attempt() {
+      _listRefreshAttempt++;
+      final delay = _listRefreshAttempt == 1
+          ? const Duration(seconds: 2)
+          : const Duration(seconds: 4);
+      _listRefreshTimer = Timer(delay, () async {
+        if (_writeChar == null || _downloading) return;
+        try {
+          final files = await listFiles();
+          debugPrint('[Xyrix] 录音停止后第 $_listRefreshAttempt 次刷新列表：'
+              '${files.length} 个文件（此前 $_listRefreshBaseCount 个）');
+          if (files.length > _listRefreshBaseCount) return; // 新录音已出现
+        } catch (_) {}
+        if (_listRefreshAttempt < 3) attempt();
+      });
+    }
+
+    attempt();
   }
 
   @override
@@ -506,6 +563,13 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<List<RecordingFile>> listFiles() async {
+    if (_downloading) {
+      // 下载中设备通知字节被整包写进目标文件，列表响应会被当成文件数据
+      // 污染下载内容（stopRecord 的刷新定时器是异步触发，可能撞上紧随其
+      // 后的下载），直接拒绝
+      throw HardwareException(
+          HardwareErrorCode.resourceBusy, '文件传输进行中，暂不能刷新列表');
+    }
     final completer = Completer<List<RecordingFile>>();
     _fileListCompleter?.complete(_lastFileList);
     _fileListCompleter = completer;
@@ -516,9 +580,38 @@ class XyrixAdapter extends BleDeviceAdapter {
       const Duration(seconds: 10),
       onTimeout: () {
         _resetFileListState();
+        _emit(const HardwareErrorEvent(
+          HardwareErrorCode.transferInterrupted,
+          '设备文件列表刷新超时，请检查设备连接后重试',
+        ));
         return _lastFileList;
       },
     );
+  }
+
+  /// 音频外传快传：设备热点 + TCP 直传（流程见 xyrix_wifi_transfer.dart）
+  Future<void> _runWifiTransfer(RecordingFile file) async {
+    if (_wifiTransfer != null) {
+      throw HardwareException(HardwareErrorCode.resourceBusy, '已有快传进行中');
+    }
+    if (_downloading) {
+      throw HardwareException(HardwareErrorCode.resourceBusy, '已有蓝牙下载进行中');
+    }
+    if (_writeChar == null) {
+      throw HardwareException(HardwareErrorCode.connectionLost, '设备未连接');
+    }
+    final session = XyrixWifiTransferSession(
+      file: file,
+      sendCommand: sendCommand,
+      emit: _emit,
+      hotspotConnector: _hotspotConnector,
+    );
+    _wifiTransfer = session;
+    try {
+      await session.run();
+    } finally {
+      _wifiTransfer = null;
+    }
   }
 
   @override
@@ -528,10 +621,7 @@ class XyrixAdapter extends BleDeviceAdapter {
     bool autoDelete = false,
   }) async {
     if (transport == TransferTransport.wifi) {
-      throw HardwareException(
-        HardwareErrorCode.unsupportedCapability,
-        'Xyrix WiFi 快传（热点+TCP）未接入，请走 BLE 通道',
-      );
+      return _runWifiTransfer(file);
     }
     if (_downloading) {
       throw HardwareException(HardwareErrorCode.resourceBusy, '已有下载进行中');
@@ -694,6 +784,7 @@ class XyrixAdapter extends BleDeviceAdapter {
   Future<void> dispose() async {
     _dlStallTimer?.cancel();
     _rtIdleTimer?.cancel();
+    _listRefreshTimer?.cancel();
     await _scanSub?.cancel();
     await _connSub?.cancel();
     await _notifySub?.cancel();

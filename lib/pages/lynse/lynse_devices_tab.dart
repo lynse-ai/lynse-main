@@ -57,6 +57,43 @@ class _LynseDevicesTabState extends State<LynseDevicesTab> {
           }
           return _TransferCard(progress: p);
         }),
+        // ---- 3b. 快传链路状态（建链阶段无字节进度，单独提示）----
+        Obx(() {
+          final s = context.lynse;
+          final st = c.wifiStatus.value;
+          final building = st == WifiTransferStatus.opening ||
+              st == WifiTransferStatus.opened ||
+              st == WifiTransferStatus.connecting;
+          if (!building && st != WifiTransferStatus.stopping) {
+            return const SizedBox.shrink();
+          }
+          return Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: LynseCard(
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      switch (st) {
+                        WifiTransferStatus.opening => '正在让设备开启 WiFi 热点…',
+                        WifiTransferStatus.opened => '热点已开启，正在连接设备热点…',
+                        WifiTransferStatus.connecting => '已连上热点，正在建立快传通道…',
+                        _ => '正在关闭快传链路…',
+                      },
+                      style: TextStyle(fontSize: 13, color: s.foreground),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
         Obx(() {
           final f = c.firmwareEvent.value;
           if (f == null ||
@@ -436,6 +473,8 @@ class _FileListCard extends StatelessWidget {
             ...files.map((f) => ListTile(
                   contentPadding: EdgeInsets.zero,
                   dense: true,
+                  // 整行可点：直接触发音频外传快传（热点 + TCP）
+                  onTap: () => onDownload(f),
                   leading: Icon(Icons.audio_file_outlined,
                       size: 20, color: s.brand),
                   title: Text(
@@ -451,7 +490,7 @@ class _FileListCard extends StatelessWidget {
                   ),
                   trailing: TextButton(
                     onPressed: () => onDownload(f),
-                    child: const Text('下载'),
+                    child: const Text('快传'),
                   ),
                 )),
         ],
