@@ -118,12 +118,18 @@ class _LynseDevicesTabState extends State<LynseDevicesTab> {
         const SizedBox(height: 12),
 
         // ---- 4. 文件列表卡 ----
-        Obx(() => _FileListCard(
-              files: c.deviceFiles,
-              empty: !c.connectionPhase.value.isUsable,
-              onRefresh: c.refreshFiles,
-              onDownload: (f) => c.downloadDeviceFile(f),
-            )),
+        // deviceFiles 必须在 Obx 闭包内读取（toList）：只传引用不会建立
+        // 订阅，列表更新时卡片永远不刷新（联调实测的"列表解析了但 UI 空"）
+        Obx(() {
+          final files = c.deviceFiles.toList();
+          return _FileListCard(
+            files: files,
+            empty: !c.connectionPhase.value.isUsable,
+            isDownloaded: c.isDownloaded,
+            onRefresh: c.refreshFiles,
+            onDownload: (f) => c.downloadDeviceFile(f),
+          );
+        }),
       ],
     );
   }
@@ -382,6 +388,13 @@ class _TransferCard extends StatelessWidget {
 
   const _TransferCard({required this.progress});
 
+  static String _fmtSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = context.lynse;
@@ -410,8 +423,9 @@ class _TransferCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '第 ${progress.currentFileIndex + 1} 个文件 · '
-            '${progress.currentPacket}/${progress.totalPacket} 包',
+            '${_fmtSize(progress.receivedBytes ?? 0)} / '
+            '${_fmtSize(progress.totalBytes ?? 0)}'
+            ' · ${(progress.fraction * 100).toStringAsFixed(0)}%',
             style: TextStyle(fontSize: 12, color: s.mutedForeground),
           ),
         ],
@@ -427,12 +441,14 @@ class _TransferCard extends StatelessWidget {
 class _FileListCard extends StatelessWidget {
   final List<RecordingFile> files;
   final bool empty;
+  final bool Function(String name) isDownloaded;
   final Future<void> Function() onRefresh;
   final ValueChanged<RecordingFile> onDownload;
 
   const _FileListCard({
     required this.files,
     required this.empty,
+    required this.isDownloaded,
     required this.onRefresh,
     required this.onDownload,
   });
@@ -470,29 +486,38 @@ class _FileListCard extends StatelessWidget {
               ),
             )
           else
-            ...files.map((f) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  // 整行可点：直接触发音频外传快传（热点 + TCP）
-                  onTap: () => onDownload(f),
-                  leading: Icon(Icons.audio_file_outlined,
-                      size: 20, color: s.brand),
-                  title: Text(
-                    f.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, color: s.foreground),
-                  ),
-                  subtitle: Text(
-                    '${(f.sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB'
-                    ' · ${f.scene == RecordScene.call ? '通话' : '会议'}',
-                    style: TextStyle(fontSize: 11, color: s.mutedForeground),
-                  ),
-                  trailing: TextButton(
-                    onPressed: () => onDownload(f),
-                    child: const Text('快传'),
-                  ),
-                )),
+            ...files.map((f) {
+              final downloaded = isDownloaded(f.name);
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                // 整行可点：直接触发音频外传快传（热点 + TCP）
+                onTap: downloaded ? null : () => onDownload(f),
+                leading: Icon(
+                  downloaded ? Icons.download_done : Icons.audio_file_outlined,
+                  size: 20,
+                  color: downloaded ? LynseColors.success : s.brand,
+                ),
+                title: Text(
+                  f.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: s.foreground),
+                ),
+                subtitle: Text(
+                  '${(f.sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB'
+                  '${downloaded ? " · 已下载" : ""}',
+                  style: TextStyle(fontSize: 11, color: s.mutedForeground),
+                ),
+                trailing: downloaded
+                    ? const Text('已下载',
+                        style: TextStyle(fontSize: 12))
+                    : TextButton(
+                        onPressed: () => onDownload(f),
+                        child: const Text('快传'),
+                      ),
+              );
+            }),
         ],
       ),
     );

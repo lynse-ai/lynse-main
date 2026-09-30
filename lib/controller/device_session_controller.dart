@@ -6,10 +6,13 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:dting/config/config.dart';
 import 'package:dting/hardware/hardware_kit.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:get/get.dart';
+import 'package:path_provider/path_provider.dart';
 
 class DeviceSessionController extends GetxController {
   DeviceSessionController._();
@@ -44,6 +47,28 @@ class DeviceSessionController extends GetxController {
   final recordState = RecordState.idle.obs;
   final recordScene = RecordScene.meeting.obs;
   final deviceFiles = <RecordingFile>[].obs;
+
+  /// 已下载到本机的设备文件名（持久化，UI 用作"已下载"标识）
+  final downloadedNames = <String>[].obs;
+  static const String _downloadedKey = 'downloadedDeviceFileNames';
+
+  bool isDownloaded(String name) => downloadedNames.contains(name);
+
+  void markDownloaded(String name) {
+    if (!downloadedNames.contains(name)) {
+      downloadedNames.add(name);
+      LocalDataBase()
+          .basicBox!
+          .put(_downloadedKey, downloadedNames.toList());
+    }
+  }
+
+  void _loadDownloadedNames() {
+    final raw = LocalDataBase().basicBox!.get(_downloadedKey);
+    if (raw is List) {
+      downloadedNames.assignAll(raw.map((e) => e.toString()));
+    }
+  }
   final transferProgress = Rxn<TransferProgress>();
   final wifiStatus = Rxn<WifiTransferStatus>();
   final firmwareEvent = Rxn<FirmwareEvent>();
@@ -57,6 +82,7 @@ class DeviceSessionController extends GetxController {
 
   /// App 启动时调用一次（NvEasyPlugin.init 之后）
   void bootstrap() {
+    _loadDownloadedNames();
     neview = NeviewAdapter()..attach();
     xyrix = XyrixAdapter();
     registry = AdapterRegistry()
@@ -114,12 +140,20 @@ class DeviceSessionController extends GetxController {
         break;
       case FileListEvent(:final files):
         deviceFiles.assignAll(files);
+        _selfTestLog('[链路] 控制器收到 FileListEvent: ${files.length} 个, '
+            'assignAll 后 deviceFiles.length=${deviceFiles.length}');
         break;
       case TransferProgressEvent(:final progress):
         transferProgress.value = progress;
         break;
       case FileImportedEvent(:final recording):
         lastImported.value = recording;
+        // 下载完成的设备文件标记为已下载（BLE 下载路径文件名形如
+        // xyrix_dl_<设备文件名>）
+        final name = recording.filePath.split('/').last;
+        if (name.startsWith('xyrix_dl_')) {
+          markDownloaded(name.substring('xyrix_dl_'.length));
+        }
         break;
       case FirmwareEvent e:
         firmwareEvent.value = e;
@@ -135,6 +169,16 @@ class DeviceSessionController extends GetxController {
         wifiStatus.value = status;
         break;
     }
+  }
+
+  /// 自测链路日志：写入 Documents/xyrix_selftest_report.txt（与适配器共用）
+  static Future<void> _selfTestLog(String line) async {
+    if (!Config.selfTestXyrix) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      await File('${dir.path}/xyrix_selftest_report.txt')
+          .writeAsString('[UI链路] $line\n', mode: FileMode.append);
+    } catch (_) {}
   }
 
   // ------------------------------------------------------------------
@@ -170,6 +214,8 @@ class DeviceSessionController extends GetxController {
     await active?.connect(device, authKey: key);
     connectedDevice.value = device;
     await queryDeviceInfo();
+    // 连接成功自动拉取设备文件列表，列表卡片即刻可用
+    await refreshFiles();
     // 记住最近连接的设备：下次进外壳页自动重连（不经扫描，按系统设备
     // 标识直连，扫描列表刷不出来时也能连上）
     LocalDataBase().basicBox!.put(
