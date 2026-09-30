@@ -127,7 +127,9 @@ class _LynseDevicesTabState extends State<LynseDevicesTab> {
             empty: !c.connectionPhase.value.isUsable,
             isDownloaded: c.isDownloaded,
             onRefresh: c.refreshFiles,
-            onDownload: (f) => c.downloadDeviceFile(f),
+            // 行点默认走蓝牙下载（实测稳定）；"快传"按钮走 WiFi 热点+TCP
+            onDownload: (f) => c.downloadDeviceFile(f, useWifi: false),
+            onQuickTransfer: (f) => c.downloadDeviceFile(f, useWifi: true),
           );
         }),
       ],
@@ -445,12 +447,16 @@ class _FileListCard extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final ValueChanged<RecordingFile> onDownload;
 
+  /// WiFi 热点+TCP 快传（整行点击之外的显式按钮）
+  final ValueChanged<RecordingFile> onQuickTransfer;
+
   const _FileListCard({
     required this.files,
     required this.empty,
     required this.isDownloaded,
     required this.onRefresh,
     required this.onDownload,
+    required this.onQuickTransfer,
   });
 
   @override
@@ -491,7 +497,7 @@ class _FileListCard extends StatelessWidget {
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                // 整行可点：直接触发音频外传快传（热点 + TCP）
+                // 整行可点：蓝牙下载（实测稳定路径）
                 onTap: downloaded ? null : () => onDownload(f),
                 leading: Icon(
                   downloaded ? Icons.download_done : Icons.audio_file_outlined,
@@ -513,7 +519,7 @@ class _FileListCard extends StatelessWidget {
                     ? const Text('已下载',
                         style: TextStyle(fontSize: 12))
                     : TextButton(
-                        onPressed: () => onDownload(f),
+                        onPressed: () => onQuickTransfer(f),
                         child: const Text('快传'),
                       ),
               );
