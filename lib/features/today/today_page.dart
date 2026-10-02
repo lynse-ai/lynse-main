@@ -7,6 +7,7 @@ library;
 import 'package:dting/core/hardware/hardware_kit.dart';
 import 'package:dting/core/services/device_session_controller.dart';
 import 'package:dting/core/services/recording_library.dart';
+import 'package:dting/core/services/task_center.dart';
 import 'package:dting/router/modules/assistant_router.dart';
 import 'package:dting/ui/components.dart';
 import 'package:dting/ui/tokens.dart';
@@ -156,9 +157,11 @@ class _StatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = RecordingLibrary.instance;
+    final tasks = TaskCenter.instance;
     return Obx(() {
       final total = library.recordings.length;
       final today = library.todayCount.value;
+      final running = tasks.activeTasks.length;
       return Row(
         children: [
           Expanded(
@@ -172,7 +175,14 @@ class _StatRow extends StatelessWidget {
           const SizedBox(width: 10),
           const Expanded(child: _StatCard(icon: Icons.task_alt, label: '待办', value: '—')),
           const SizedBox(width: 10),
-          const Expanded(child: _StatCard(icon: Icons.sync, label: '进行中', value: '—')),
+          Expanded(
+            child: _StatCard(
+              icon: Icons.sync,
+              label: '进行中',
+              value: running > 0 ? '$running' : '—',
+              sub: running > 0 ? '个任务' : null,
+            ),
+          ),
         ],
       );
     });
