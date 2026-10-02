@@ -7,8 +7,8 @@ library;
 
 import 'dart:typed_data';
 
-import 'package:dting/hardware/xyrix/xyrix_commands.dart';
-import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_commands.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_frame_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

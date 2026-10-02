@@ -5,7 +5,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:dting/hardware/xyrix/xyrix_wifi_transfer.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_wifi_transfer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

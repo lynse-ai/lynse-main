@@ -2,7 +2,7 @@
 ///
 /// 业务/UI 只 import 本文件：
 /// ```dart
-/// import 'package:dting/hardware/hardware_kit.dart';
+/// import 'package:dting/core/hardware/hardware_kit.dart';
 /// ```
 library;
 

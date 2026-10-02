@@ -1,15 +1,25 @@
 /// 设备会话控制器：硬件抽象层的 GetX 门面。
 ///
-/// 新版 lynse 风格 UI 只订阅本控制器的状态，不直接接触任何厂商 SDK；
-/// 旧版页面的 DtingStore 路径不受影响，迁移完成后旧路径下线。
+/// 助手版 UI 只订阅本控制器的状态，不直接接触任何厂商 SDK。
+/// 本层不弹任何 UI（snackbar/dialog），需要用户感知的结果通过
+/// [sessionNotice] 交给 UI 层呈现。
 library;
 
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:dting/hardware/hardware_kit.dart';
+import 'package:dting/core/hardware/hardware_kit.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:get/get.dart';
+
+/// 面向用户的会话通知（连接结果、重连失败等），由 UI 层决定如何呈现。
+class SessionNotice {
+  final String title;
+  final String message;
+  final bool isError;
+
+  const SessionNotice(this.title, this.message, {this.isError = false});
+}
 
 class DeviceSessionController extends GetxController {
   DeviceSessionController._();
@@ -49,6 +59,7 @@ class DeviceSessionController extends GetxController {
   final firmwareEvent = Rxn<FirmwareEvent>();
   final lastImported = Rxn<ImportedRecording>();
   final lastError = Rxn<String>();
+  final sessionNotice = Rxn<SessionNotice>();
 
   BleDeviceAdapter? get active {
     final vendor = activeVendor.value;
@@ -208,12 +219,12 @@ class DeviceSessionController extends GetxController {
     );
     try {
       await connect(device);
-      Get.snackbar('已自动连接', device.name, snackPosition: SnackPosition.TOP);
+      sessionNotice.value = SessionNotice('已自动连接', device.name);
     } catch (e) {
-      Get.snackbar(
+      sessionNotice.value = SessionNotice(
         '自动重连失败',
         '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
-        snackPosition: SnackPosition.TOP,
+        isError: true,
       );
     }
   }

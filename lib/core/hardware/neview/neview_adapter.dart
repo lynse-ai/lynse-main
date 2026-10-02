@@ -6,9 +6,9 @@ library;
 
 import 'dart:async';
 
-import 'package:dting/hardware/ble_device_adapter.dart';
-import 'package:dting/hardware/hardware_event.dart';
-import 'package:dting/hardware/models.dart';
+import 'package:dting/core/hardware/ble_device_adapter.dart';
+import 'package:dting/core/hardware/hardware_event.dart';
+import 'package:dting/core/hardware/models.dart';
 import 'package:dting/plugin/nv_easy_plugin.dart';
 
 class NeviewAdapter extends BleDeviceAdapter {

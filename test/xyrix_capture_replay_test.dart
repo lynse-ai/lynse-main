@@ -8,9 +8,9 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:dting/hardware/models.dart';
-import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
-import 'package:dting/hardware/xyrix/xyrix_stream_parsers.dart';
+import 'package:dting/core/hardware/models.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_frame_codec.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_stream_parsers.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 0x05 起始帧 + 1083B 明文列表 + 结束 ACK（真机 19:50 会话 offset 76..1169）

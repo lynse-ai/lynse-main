@@ -19,11 +19,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dting/hardware/hardware_event.dart';
-import 'package:dting/hardware/models.dart';
-import 'package:dting/hardware/xyrix/hotspot_connector.dart';
-import 'package:dting/hardware/xyrix/xyrix_commands.dart';
-import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
+import 'package:dting/core/hardware/hardware_event.dart';
+import 'package:dting/core/hardware/models.dart';
+import 'package:dting/core/hardware/xyrix/hotspot_connector.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_commands.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_frame_codec.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 

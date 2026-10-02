@@ -1,7 +1,7 @@
 /// lynse 风格外壳：主页 / 设备 / 记录 三个 tab（参考 lynse-desktop 信息架构）。
 library;
 
-import 'package:dting/controller/device_session_controller.dart';
+import 'package:dting/core/services/device_session_controller.dart';
 import 'package:dting/pages/lynse/lynse_devices_tab.dart';
 import 'package:dting/pages/lynse/lynse_home_tab.dart';
 import 'package:dting/pages/lynse/lynse_recordings_tab.dart';

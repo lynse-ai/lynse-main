@@ -7,9 +7,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'package:dting/store/dting_store.dart';
 import 'package:flutter/services.dart';
-import 'package:get/get.dart';
 
 enum AudioType {
   mp3("mp3"),
@@ -22,8 +20,8 @@ enum AudioType {
   const AudioType(this.value);
 }
 
-/// 插件原始事件（未翻译）。供新的硬件抽象层 NeviewAdapter 订阅；
-/// 旧 DtingStore 直连路径暂时保留，迁移完成后移除直连逻辑。
+/// 插件原始事件（未翻译）。硬件抽象层 NeviewAdapter 订阅 rawEvents
+/// 后翻译成 HardwareEvent；本插件不直接触碰任何上层状态。
 class NvRawEvent {
   final String type;
   final dynamic data;
@@ -63,175 +61,17 @@ class NvEasyPlugin {
   }
 
   static Future<dynamic> _handleMessage(dynamic message) {
-    // print('收到原生消息: $message');
-    var appController = Get.find<DtingStore>();
+    // 原生 method-call 回调：只广播原始事件，业务语义由硬件抽象层翻译
     if (message is MethodCall) {
-      var methodcall = message;
-      var type = methodcall.method;
-      var data = methodcall.arguments;
-      _rawEvents.add(NvRawEvent(type, data));
-      appController.deviceState.value = type;
-      switch (type) {
-        case 'didDiscover':
-          // 处理扫描结果
-          appController.getScanDevice(data);
-          print('发现设备消息: $data');
-          break;
-        case 'didConnect':
-          // 处理连接成功
-          appController.connectDevice(data);
-          print('连接成功: $data');
-          break;
-        case 'didFailConnect':
-          // 处理连接失败
-          appController.connectFailDevice(data);
-          print('连接失败: $data');
-          break;
-        case 'didDisconnect':
-          // 处理断开连接
-          appController.disConnectDevice();
-          print('断开连接: $data');
-          break;
-        case 'didUpdateState':
-          // 处理连接状态更新
-          // 可以准备开始录音了
-          print('连接状态更新: $data');
-          break;
-        case 'didReceiveAuthsn':
-          // 处理获取SN码成功
-          appController.querySN(data);
-          print('获取SN码成功: $data');
-          break;
-        case 'didUpdateBattery':
-          // 处理电量更新
-          appController.updateBattery(data);
-          // {"left": left, "right": right, "caseBattery":caseBattery}
-
-          print('电量更新: $data');
-          break;
-        case "didUpdateBound":
-          // 处理绑定状态更新
-          appController.updateBound(data);
-          // {"isBound": isBound, "isSuccess": isSuccess}
-          print('绑定状态更新: $data');
-          break;
-        case "didReceiveFiles":
-          // 处理硬件返回的文件列表
-          // data 数据流 Unit8List
-          print('didReceiveFiles 文件列表: $data');
-          appController.receiveFiles(data);
-          break;
-        // case "bleStartGetFile":
-        //   // 开始处理硬件返回的文件 - 通过蓝牙
-        //   // data fileSN
-        //   print('开始处理文件: $data');
-        //   break;
-        // case "bleDidGetFile":
-        //   // 处理硬件返回的文件列表 - 通过蓝牙
-        //   // data 数据流 Unit8List
-        //   print('bleDidGetFile 文件列表: $data');
-        //   break;
-        case 'error':
-          // 处理错误
-          print('错误: $data');
-          break;
-        //录音类型
-        case "didUpdateMeetingType":
-          print('录音类型: $data');
-          appController.updateMeetingType(data);
-          break;
-        //设备录音状态
-        case 'didUpdateDeviceRecordStatus':
-          print('didUpdateDeviceRecordStatus: $data');
-          appController.updateDeviceRecordStatus(data);
-          break;
-        case 'sendRecordStatus':
-          print('sendRecordStatus: $data');
-          appController.updateDeviceRecordStatusUI(data);
-          break;
-        case 'didReceiveRecordMP3FilePath':
-          // val fileMp3Path = mapOf("fileMp3Path" to fileMp3Path)
-          appController.importPCM(data);
-
-          print('didReceiveRecordMP3FilePath: $data');
-          break;
-        case 'didUpdateDownloadFileProgress':
-          //val progress = mapOf("currentPacket" to currentPacket, "totalPacket" to totalPacket)
-          print('didUpdateDownloadFileProgress: $data');
-          appController.updateDownloadFileProgress(data);
-          break;
-        case 'didUpdateDownloadFileState':
-          //val progress = mapOf("currentPacket" to currentPacket, "totalPacket" to totalPacket)
-          print('didUpdateDownloadFileState: $data');
-          appController.updateDownloadFileState(data);
-          break;
-        case 'fileDownloadSpeed':
-          print('fileDownloadSpeed: $data');
-          appController.updateDownloadFileSpeed(data);
-          break;
-        case 'sendDownloadAllFileUI':
-          //val progress = mapOf("currentPacket" to currentPacket, "totalPacket" to totalPacket)
-          print('sendDownloadAllFileUI: $data');
-          appController.updateIsLoadingRecordFile(data);
-          break;
-        case 'deviceVersion':
-          print('deviceVersion: $data');
-          // val map = mapOf("softwareVersion" to softwareVersion,"hardwareVersion" to hardwareVersion)
-          appController.connectingDevice.value.version =
-              data["softwareVersion"];
-          break;
-        case 'deviceUpdateOtaStatus':
-          print('deviceUpdateOtaStatus: $data');
-          appController.upLoadOTABinPackage(data);
-          break;
-        case 'deviceWifiStatus':
-          print('deviceWifiStatus: $data');
-          var wifiStatus = data["wifiStatus"];
-          appController.updateWifiStatus(wifiStatus);
-          break;
-        case 'wifiDidGetFile':
-          print('wifiDidGetFile: $data');
-          // WiFi快传文件完成，处理方式与蓝牙下载相同
-          appController.importPCM(data);
-          break;
-        case 'wifiDidGetMP3File':
-          print('wifiDidGetMP3File: $data');
-          // WiFi快传MP3文件完成
-          appController.importPCM(data);
-          break;
-        case 'blueTurnOff':
-          print('blueTurnOff: $data');
-          appController.disConnectDevice();
-          appController.handleBlueTurnOff();
-        default:
-          print('未知消息类型: $type - $data');
-      }
+      _rawEvents.add(NvRawEvent(message.method, message.arguments));
     }
     return Future.value(null);
   }
 
   static void _handleEvent(dynamic event) {
     if (event is Map) {
-      print('收到原生事件: ${event['type']} - ${event['data']}');
-      // 触发业务逻辑（如更新UI状态）
-      var type = event['type'];
-      var data = event['data'];
-      _rawEvents.add(NvRawEvent(type, data));
-      if (type == "deviceState") {
-        var state = data["state"];
-        var isConnected = data["isConnected"];
-        print("设备状态：$state, 是否连接：$isConnected");
-      } else if (type == "didUpdateMeetingType") {
-        // 处理设备模式更新事件
-        print('收到设备模式更新事件: $data');
-        try {
-          // 使用Get获取DtingStore实例
-          final appController = Get.find<DtingStore>();
-          appController.updateMeetingType(data);
-        } catch (e) {
-          print('获取DtingStore实例失败: $e');
-        }
-      }
+      // 原生 event-channel 回调：同样只广播，业务语义由硬件抽象层翻译
+      _rawEvents.add(NvRawEvent(event['type'], event['data']));
     }
   }
 

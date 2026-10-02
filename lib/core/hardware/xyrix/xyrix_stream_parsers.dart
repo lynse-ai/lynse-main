@@ -14,9 +14,9 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:dting/hardware/models.dart';
-import 'package:dting/hardware/xyrix/xyrix_commands.dart';
-import 'package:dting/hardware/xyrix/xyrix_frame_codec.dart';
+import 'package:dting/core/hardware/models.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_commands.dart';
+import 'package:dting/core/hardware/xyrix/xyrix_frame_codec.dart';
 import 'package:flutter/foundation.dart';
 
 /// 文件列表收集器：`FF 55 AA 00 05` 之后、`FF 55 AA 00 2F` 之前是明文行。

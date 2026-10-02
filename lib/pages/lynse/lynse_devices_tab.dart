@@ -2,8 +2,8 @@
 /// （对照 lynse-desktop devices/devices-page.tsx 四卡结构）。
 library;
 
-import 'package:dting/controller/device_session_controller.dart';
-import 'package:dting/hardware/hardware_kit.dart';
+import 'package:dting/core/services/device_session_controller.dart';
+import 'package:dting/core/hardware/hardware_kit.dart';
 import 'package:dting/pages/lynse/lynse_widgets.dart';
 import 'package:dting/styles/theme.dart';
 import 'package:dting/utils/local_database.dart';

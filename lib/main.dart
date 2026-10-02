@@ -1,5 +1,5 @@
 import 'package:dting/config/config.dart';
-import 'package:dting/controller/device_session_controller.dart';
+import 'package:dting/core/services/device_session_controller.dart';
 import 'package:dting/intl/messages_all.dart';
 import 'package:dting/pages/home/home_index/home_observer.dart';
 import 'package:dting/plugin/nv_easy_plugin.dart';
