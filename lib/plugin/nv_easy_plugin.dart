@@ -76,7 +76,6 @@ class NvEasyPlugin {
   }
 
   static void _handleError(Object error) {
-    print('通信错误: $error');
   }
 
   /// 获取平台版本
@@ -150,7 +149,6 @@ class NvEasyPlugin {
   /// }
   Future<Map<String, String>> stopRecord() async {
     final result = await _methodChannel.invokeMethod('stopRecord');
-    print("stopRecord result: $result");
     if (result == null) {
       return {};
     }
@@ -165,7 +163,6 @@ class NvEasyPlugin {
         final Map<String, dynamic> decoded = json.decode(result);
         return Map<String, String>.from(decoded);
       } catch (e) {
-        print("Error parsing stopRecord result: $e");
         // 如果是旧格式（直接返回路径字符串），将其转换为新格式
         return {
           "mp3Path": result,
@@ -281,7 +278,6 @@ class NvEasyPlugin {
       final bool result = await _methodChannel.invokeMethod('minimizeApp');
       return result;
     } catch (e) {
-      print("Failed to minimize app: '$e'.");
       return false;
     }
   }

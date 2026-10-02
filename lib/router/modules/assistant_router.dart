@@ -4,6 +4,7 @@ library;
 import 'package:dting/features/assistant/assistant_chat_page.dart';
 import 'package:dting/features/recordings/recording_detail_page.dart';
 import 'package:dting/features/shell/assistant_shell_page.dart';
+import 'package:dting/ui/component_demo_page.dart';
 import 'package:get/get.dart';
 
 class AssistantRouter {
@@ -16,6 +17,9 @@ class AssistantRouter {
   /// 录音详情（播放条 + 转写 / 时间轴 / 纪要）
   static final recordingDetail = '/recordingDetail';
 
+  /// 设计系统 demo（验收用）
+  static final uiDemo = '/uiDemo';
+
   static final pages = [
     GetPage(
       name: shell,
@@ -24,5 +28,6 @@ class AssistantRouter {
     ),
     GetPage(name: chat, page: () => const AssistantChatPage()),
     GetPage(name: recordingDetail, page: () => const RecordingDetailPage()),
+    GetPage(name: uiDemo, page: () => const ComponentDemoPage()),
   ];
 }

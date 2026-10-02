@@ -9,7 +9,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dting/core/hardware/models.dart';
-import 'package:dting/core/hardware/xyrix/xyrix_frame_codec.dart';
 import 'package:dting/core/hardware/xyrix/xyrix_stream_parsers.dart';
 import 'package:flutter_test/flutter_test.dart';
 

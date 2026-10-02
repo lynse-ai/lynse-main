@@ -21,7 +21,7 @@ class TasksPage extends StatelessWidget {
           padding: const EdgeInsets.all(LSpacing.xl),
           children: const [
             SizedBox(height: 80),
-            const LCard(
+            LCard(
               child: LEmpty(
                 icon: Icons.checklist,
                 title: '暂无任务',

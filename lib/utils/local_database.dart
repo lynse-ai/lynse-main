@@ -59,7 +59,6 @@ class LocalDataBase {
       LocalDataBase().basicBox!.put("appleToken", null);
       LocalDataBase().basicBox!.put("currentTeamId", null);
     } catch (e) {
-      print("Error clearing cache: $e");
     }
   }
 
