@@ -7,7 +7,7 @@ import 'package:dting/pages/device/bootstrapoperation/bootstrapoperation_page.da
 import 'package:dting/router/modules/device_router.dart';
 import 'package:dting/router/modules/home_router.dart';
 import 'package:dting/router/modules/login_router.dart';
-import 'package:dting/router/modules/lynse_router.dart';
+import 'package:dting/router/modules/assistant_router.dart';
 import 'package:dting/router/modules/payment_router.dart';
 import 'package:dting/router/modules/personal_router.dart';
 import 'package:dting/router/modules/team_router.dart';
@@ -111,9 +111,9 @@ class NavigationUtils {
   }
 
   static void replaceHomeIndex() {
-    // 新版 lynse 外壳（主页/设备/记录）；旧首页保留可回退：
-    // Get.offNamed(HomeRouter.homeindex);
-    Get.offNamed(LynseRouter.shell);
+    // 助手版外壳（今日/录音/设备/任务 + 常驻助手输入条）：
+    // Get.offNamed(LynseRouter.shell);
+    Get.offNamed(AssistantRouter.shell);
   }
 
   static void toHomeIndex() {

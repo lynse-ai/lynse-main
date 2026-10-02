@@ -5,6 +5,7 @@ import 'package:dting/pages/home/home_index/home_observer.dart';
 import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/store/dting_store.dart';
 import 'package:dting/styles/theme.dart';
+import 'package:dting/ui/theme.dart';
 import 'package:dting/utils/color_util.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:dting/utils/local_sqldb.dart';
@@ -141,9 +142,9 @@ class MyApp extends StatelessWidget {
           supportedLocales: const [Locale('zh', 'CN')],
           locale: const Locale('zh', 'CN'),
           fallbackLocale: const Locale('zh', 'CN'),
-          theme: LynseTheme.light(),
-          darkTheme: LynseTheme.dark(),
-          themeMode: ThemeMode.light, // TODO: 设置页加「外观」三选后改为动态
+          theme: AssistantTheme.light(),
+          darkTheme: AssistantTheme.light(),
+          themeMode: ThemeMode.light, // 助手版先只做浅色（OpenMUSE 基因是浅色画布）
         );
       },
     );

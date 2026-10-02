@@ -1,3 +1,4 @@
+import 'package:dting/router/modules/assistant_router.dart';
 import 'package:dting/router/modules/device_router.dart';
 import 'package:dting/router/modules/home_router.dart';
 import 'package:dting/router/modules/login_router.dart';
@@ -20,5 +21,6 @@ class AppRouter {
     ...PaymentRouter.pages,
     ...TranslateRouter.pages,
     ...LynseRouter.pages,
+    ...AssistantRouter.pages,
   ];
 }
