@@ -3,6 +3,7 @@ library;
 
 import 'package:dting/pages/lynse/lynse_recording_detail_page.dart';
 import 'package:dting/pages/lynse/lynse_shell_page.dart';
+import 'package:dting/ui/component_demo_page.dart';
 import 'package:get/get.dart';
 
 class LynseRouter {
@@ -12,6 +13,9 @@ class LynseRouter {
   /// 录音详情（转写 / 时间轴 / 纪要）
   static final recordingDetail = '/lynseRecordingDetail';
 
+  /// 设计系统 demo（验收用，Phase 7 决定去留）
+  static final uiDemo = '/uiDemo';
+
   static final pages = [
     GetPage(
       name: shell,
@@ -19,5 +23,6 @@ class LynseRouter {
       binding: LynseShellBinding(),
     ),
     GetPage(name: recordingDetail, page: () => const LynseRecordingDetailPage()),
+    GetPage(name: uiDemo, page: () => const ComponentDemoPage()),
   ];
 }
