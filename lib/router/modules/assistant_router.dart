@@ -2,6 +2,7 @@
 library;
 
 import 'package:dting/features/assistant/assistant_chat_page.dart';
+import 'package:dting/features/recordings/recording_detail_page.dart';
 import 'package:dting/features/shell/assistant_shell_page.dart';
 import 'package:get/get.dart';
 
@@ -12,6 +13,9 @@ class AssistantRouter {
   /// 助手全屏会话
   static final chat = '/assistantChat';
 
+  /// 录音详情（播放条 + 转写 / 时间轴 / 纪要）
+  static final recordingDetail = '/recordingDetail';
+
   static final pages = [
     GetPage(
       name: shell,
@@ -19,5 +23,6 @@ class AssistantRouter {
       binding: AssistantShellBinding(),
     ),
     GetPage(name: chat, page: () => const AssistantChatPage()),
+    GetPage(name: recordingDetail, page: () => const RecordingDetailPage()),
   ];
 }

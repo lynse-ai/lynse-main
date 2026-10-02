@@ -6,6 +6,7 @@ library;
 
 import 'package:dting/core/hardware/hardware_kit.dart';
 import 'package:dting/core/services/device_session_controller.dart';
+import 'package:dting/core/services/recording_library.dart';
 import 'package:dting/router/modules/assistant_router.dart';
 import 'package:dting/ui/components.dart';
 import 'package:dting/ui/tokens.dart';
@@ -154,24 +155,37 @@ class _StatRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        Expanded(child: _StatCard(icon: Icons.graphic_eq, label: '录音', value: '—')),
-        SizedBox(width: 10),
-        Expanded(child: _StatCard(icon: Icons.task_alt, label: '待办', value: '—')),
-        SizedBox(width: 10),
-        Expanded(child: _StatCard(icon: Icons.sync, label: '进行中', value: '—')),
-      ],
-    );
+    final library = RecordingLibrary.instance;
+    return Obx(() {
+      final total = library.recordings.length;
+      final today = library.todayCount.value;
+      return Row(
+        children: [
+          Expanded(
+            child: _StatCard(
+              icon: Icons.graphic_eq,
+              label: '录音',
+              value: total > 0 ? '$total' : '—',
+              sub: today > 0 ? '今天 +$today' : null,
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(child: _StatCard(icon: Icons.task_alt, label: '待办', value: '—')),
+          const SizedBox(width: 10),
+          const Expanded(child: _StatCard(icon: Icons.sync, label: '进行中', value: '—')),
+        ],
+      );
+    });
   }
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.icon, required this.label, required this.value});
+  const _StatCard({required this.icon, required this.label, required this.value, this.sub});
 
   final IconData icon;
   final String label;
   final String value;
+  final String? sub;
 
   @override
   Widget build(BuildContext context) {
@@ -184,7 +198,7 @@ class _StatCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(value, style: LType.heading),
           const SizedBox(height: 2),
-          Text(label, style: LType.small),
+          Text(sub ?? label, style: LType.small),
         ],
       ),
     );

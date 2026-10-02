@@ -5,6 +5,8 @@
 library;
 
 import 'package:dting/core/services/device_session_controller.dart';
+import 'package:dting/core/services/playback_service.dart';
+import 'package:dting/core/services/recording_library.dart';
 import 'package:dting/features/device/device_page.dart';
 import 'package:dting/features/recordings/recordings_page.dart';
 import 'package:dting/features/tasks/tasks_page.dart';
@@ -21,6 +23,8 @@ class AssistantShellBinding extends Bindings {
     if (!Get.isRegistered<DeviceSessionController>()) {
       DeviceSessionController.init().bootstrap();
     }
+    RecordingLibrary.init().bootstrap();
+    PlaybackService.init().boot();
   }
 }
 
