@@ -67,6 +67,11 @@ abstract final class XyrixCommands {
   static const int rtResume = 0x35;
 
   // ---- 文件传输 ----
+  /// 传输准备就绪应答（0x2D，2026-09-30 抓包实证）：App 发 0x07 后设备
+  /// 回 `FF 55 AA 04 2D [4B 文件大小 BE]` + ACK；收到它之后再发 0x08 才
+  /// 开始推数据。文档未列出此命令码
+  static const int transferReady = 0x2D;
+
   /// 准备传输（杰理芯片）：绝对路径 + 大小
   static const int transferPrepareJl = 0x07;
 

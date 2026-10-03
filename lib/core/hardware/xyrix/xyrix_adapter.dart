@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dting/config/config.dart';
 import 'package:dting/core/hardware/ble_device_adapter.dart';
 import 'package:dting/core/hardware/hardware_event.dart';
 import 'package:dting/core/hardware/models.dart';
@@ -45,7 +46,7 @@ class XyrixAdapter extends BleDeviceAdapter {
   File? _streamFile;
 
   /// 文件列表收集 + 实时音频流解析（纯逻辑，见 xyrix_stream_parsers.dart）
-  late final XyrixNotificationRouter _router = XyrixNotificationRouter(
+  late final XyrixStreamRouter _router = XyrixStreamRouter(
     onFrame: _dispatchFrame,
     onFileList: _onFileListParsed,
     onOpusPacket: _onOpusPacket,
@@ -78,7 +79,12 @@ class XyrixAdapter extends BleDeviceAdapter {
   DateTime _dlStartTime = DateTime.now();
   DateTime _dlLastProgressEmit = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _dlStallTimer;
+  Timer? _dlPrepareTimer;
   Completer<void>? _dlCompleter;
+
+  /// 下载两阶段：true = 已发 0x07 等设备 0x2D 就绪应答（通知走路由器）；
+  /// false+downloading = 数据阶段（通知原样写入目标文件）
+  bool _dlAwaitingReady = false;
 
   /// Nordic UART Service
   static final Guid _serviceUuid =
@@ -247,6 +253,7 @@ class XyrixAdapter extends BleDeviceAdapter {
           debugPrint('[Xyrix] 连接后拉取文件列表：${files.length} 个文件');
         }).catchError((_) {});
       });
+      _maybeStartSelfTest();
     } on HardwareException {
       await _abortConnection(dev);
       rethrow;
@@ -337,9 +344,9 @@ class XyrixAdapter extends BleDeviceAdapter {
     // 2) 原始字节无条件打印：协议联调期间对照厂商文档用
     debugPrint('[Xyrix] 收到通知 ${value.length}B: '
         '${value.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
-    // 3) 下载进行中：字节全部计入目标文件（分帧格式未知，先原样落盘），
+    // 3) 下载数据阶段：字节全部计入目标文件（分帧格式未知，先原样落盘），
     //    控制帧解析暂停——随机数据可能碰巧命中命令码，干扰 UI 状态
-    if (_downloading) {
+    if (_downloading && !_dlAwaitingReady) {
       _onDownloadBytes(value);
       return;
     }
@@ -350,6 +357,9 @@ class XyrixAdapter extends BleDeviceAdapter {
   /// 文件列表解析完成：发布事件并唤醒 listFiles() 等待方
   void _onFileListParsed(List<RecordingFile> files) {
     debugPrint('[Xyrix] 文件列表解析完成：${files.length} 个文件');
+    if (Config.selfTestXyrix) {
+      _appendSelfTestLog('[事件] FileListEvent: ${files.length} 个文件');
+    }
     _lastFileList = files;
     _emit(FileListEvent(files));
     final completer = _fileListCompleter;
@@ -397,7 +407,6 @@ class XyrixAdapter extends BleDeviceAdapter {
   Future<void> _closeRealtimeCapture() async {
     _rtIdleTimer?.cancel();
     _rtIdleTimer = null;
-    _router.resetRealtime();
     final sink = _rtSink;
     final file = _rtFile;
     final bytes = _rtPayloadBytes;
@@ -415,6 +424,66 @@ class XyrixAdapter extends BleDeviceAdapter {
     if (bytes > 0) {
       _emit(FileImportedEvent(ImportedRecording(filePath: file.path)));
     }
+  }
+
+  // ------------------------------------------------------------------
+  // 自驱动联调（Config.selfTestXyrix）：自动 录音→停止→刷新列表 并写报告
+  // ------------------------------------------------------------------
+
+  /// 自测进行中标记（防止重复触发）
+  bool _selfTestRunning = false;
+
+  void _maybeStartSelfTest() {
+    if (!Config.selfTestXyrix) return;
+    // connect() 可能被自动重连+手动操作触发两次，自测只跑一次
+    if (_selfTestRunning) return;
+    _selfTestRunning = true;
+    _appendSelfTestLog(
+        '=== 连接成功，下载自测开始 ${DateTime.now().toIso8601String()} ===');
+    Timer(const Duration(seconds: 3), () async {
+      RecordingFile? target;
+      try {
+        final files = await listFiles();
+        await _appendSelfTestLog('[1] 列表: ${files.length} 个文件');
+        // 选最小的文件下载（141KB 级别，BLE 约 1-2 分钟）
+        final sorted = [...files]..sort((a, b) => a.sizeBytes.compareTo(b.sizeBytes));
+        target = sorted.isEmpty ? null : sorted.first;
+        await _appendSelfTestLog(
+            '[2] 下载目标: ${target?.name} (${target?.sizeBytes} B)');
+      } catch (e) {
+        await _appendSelfTestLog('[1] 列表刷新失败: $e');
+      }
+      if (target == null) {
+        await _appendSelfTestLog('=== 自测结束（无目标） ===');
+        _selfTestRunning = false;
+        return;
+      }
+      try {
+        await downloadFile(target, transport: TransferTransport.ble);
+        await _appendSelfTestLog('[3] 下载完成');
+      } catch (e) {
+        await _appendSelfTestLog('[3] 下载失败/中断: $e');
+      }
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        final f = File('${dir.path}/xyrix_dl_${target.name}');
+        final exists = await f.exists();
+        await _appendSelfTestLog(
+            '[4] 输出文件: ${exists ? "${await f.length()} B" : "不存在"}');
+      } catch (_) {}
+      await _appendSelfTestLog(
+          '=== 自测结束 ${DateTime.now().toIso8601String()} ===');
+      _selfTestRunning = false;
+    });
+  }
+
+  Future<void> _appendSelfTestLog(String line) async {
+    debugPrint('[Xyrix][自测] $line');
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      await File('${dir.path}/xyrix_selftest_report.txt')
+          .writeAsString('$line\n', mode: FileMode.append);
+    } catch (_) {}
   }
 
   void _dispatchFrame(XyrixFrame frame) {
@@ -442,6 +511,10 @@ class XyrixAdapter extends BleDeviceAdapter {
         break;
       case XyrixCommands.commandAck:
         // 命令完成 ACK（文件列表结束帧已在收集模式中拦截，不会到这里）
+        break;
+      case XyrixCommands.transferReady:
+        // 传输准备就绪（数据 = 4B 文件大小 BE），收到后才启动 0x08
+        _onTransferReady(frame.data);
         break;
       case XyrixCommands.queryStorage:
         // TODO(厂商确认)：存储信息字节布局
@@ -494,11 +567,10 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> startRecord(RecordScene mode) async {
-    // 联调探测：会议=0x1B 仅设备端存储录音；通话=0x24 边录音边蓝牙推流，
-    // 用于对比两种模式下设备是否推送实时音频流、推流字节格式如何
-    await sendCommand(mode == RecordScene.call
-        ? XyrixCommands.recordWithTransfer
-        : XyrixCommands.recordStart);
+    // 0x24（边录边传）在本版固件（v2.0.13）上无推流也不保存，弃用；
+    // 0x1B 录音实测既存 WAV 又推送实时音频流，两种场景统一使用
+    //（2026-09-30 自测：0x24 15s 无包，0x1B 15s 648 包 / 55KB）
+    await sendCommand(XyrixCommands.recordStart);
     // 厂商协议无命令确认帧：GATT 写入成功即视为已生效（录音中设备会直接
     // 开始推送数据流），否则 UI 永远等不到状态回调
     _emit(RecordStateEvent(RecordState.recording));
@@ -507,6 +579,7 @@ class XyrixAdapter extends BleDeviceAdapter {
   @override
   Future<void> pauseRecord() async {
     await sendCommand(XyrixCommands.recordPause);
+    await sendCommand(XyrixCommands.opusPause);
     await _closeRealtimeCapture();
     _emit(RecordStateEvent(RecordState.paused));
   }
@@ -519,7 +592,10 @@ class XyrixAdapter extends BleDeviceAdapter {
 
   @override
   Future<void> stopRecord() async {
+    // 0x1D 保存 WAV 段；实测它不会停止实时推流，补 0x53 结束 OPUS 流
+    //（2026-09-30 抓包：只发 0x1D 时设备持续推流到断连）
     await sendCommand(XyrixCommands.recordSave);
+    await sendCommand(XyrixCommands.opusEnd);
     await _closeRealtimeCapture();
     _emit(RecordStateEvent(RecordState.idle));
     // 设备保存 WAV 耗时随录音时长增长（十几分钟的录音保存可能远超 2 秒），
@@ -643,22 +719,47 @@ class XyrixAdapter extends BleDeviceAdapter {
       _dlOutFile = File('${dir.path}/xyrix_dl_${file.name}');
       _dlSink = _dlOutFile!.openWrite();
       _emitDownloadProgress(TransferState.transferring, force: true);
-      // 0x07 数据 = 路径 + 4 字节大端文件大小（对齐 0x46「路径 hex + 4 字节
-      // 大端断点」的编码习惯；文档只写「绝对路径 + 文件大小」未给布局）
+      // 0x07 数据 = 路径 + 4 字节大端文件大小。实测设备会回
+      // `FF 55 AA 04 2D [4B 大小 BE]` + ACK（传输准备就绪），
+      // 必须等它到了再发 0x08，否则 0x08 被丢弃、数据永不到来
       final pathBytes = utf8.encode('0:/${file.name}');
       final size = file.sizeBytes;
       final data = BytesBuilder()..add(pathBytes);
       for (final shift in const [24, 16, 8, 0]) {
         data.addByte((size >> shift) & 0xFF);
       }
+      _dlAwaitingReady = true;
       await sendCommand(XyrixCommands.transferPrepareJl, data.toBytes());
-      await sendCommand(XyrixCommands.transferStartJl);
-      _armStallWatchdog();
+      _dlPrepareTimer = Timer(const Duration(seconds: 10), () {
+        if (_downloading && _dlAwaitingReady) {
+          _appendSelfTestLog('[下载] 10s 未收到 0x2D 就绪应答，终止');
+          _finishDownload(TransferState.failed);
+        }
+      });
     } catch (e) {
       await _finishDownload(TransferState.failed);
       rethrow;
     }
     return completer.future;
+  }
+
+  /// 设备 0x2D 就绪应答：数据为 4 字节大端文件大小（与请求一致即校验通过）。
+  /// **关键实测结论（2026-09-30）**：收到 0x2D 后设备会自动开始下发数据，
+  /// 不需要也不允许再发 0x08「启动传输」——0x08 会令设备丢弃本次传输
+  /// （表现为 0x2D 后 0 字节下发）。文档的 0x08 流程与本版固件（v2.0.13）不符。
+  Future<void> _onTransferReady(List<int> data) async {
+    if (!_dlAwaitingReady) return;
+    _dlAwaitingReady = false;
+    _dlPrepareTimer?.cancel();
+    _dlPrepareTimer = null;
+    final confirmedSize = data.length >= 4
+        ? (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
+        : 0;
+    debugPrint('[Xyrix] 传输就绪，设备确认大小 $confirmedSize，等待数据下发');
+    if (Config.selfTestXyrix) {
+      _appendSelfTestLog('[下载] 0x2D 就绪应答，设备确认大小 $confirmedSize B');
+    }
+    _armStallWatchdog();
   }
 
   /// 下载中收到设备数据：原样写入目标文件并按字节推进度。
@@ -672,10 +773,20 @@ class XyrixAdapter extends BleDeviceAdapter {
       _dlFirstPacketLogged = true;
       debugPrint('[Xyrix] 首个数据包 ${value.length}B: '
           '${value.take(48).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+      if (Config.selfTestXyrix) {
+        _appendSelfTestLog('[下载] 首包 ${value.length}B: '
+            '${value.take(48).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+      }
     }
     if (_dlTotalBytes > 0 && _dlReceived >= _dlTotalBytes) {
       _finishDownload(TransferState.completed);
     } else {
+      // 每 32KB 向自测报告打一个进度点
+      if (Config.selfTestXyrix &&
+          _dlReceived ~/ 32768 != (_dlReceived - value.length) ~/ 32768) {
+        _appendSelfTestLog(
+            '[下载] 进度 $_dlReceived/$_dlTotalBytes B');
+      }
       _emitDownloadProgress(TransferState.transferring);
     }
   }
@@ -707,6 +818,9 @@ class XyrixAdapter extends BleDeviceAdapter {
   Future<void> _finishDownload(TransferState endState) async {
     _dlStallTimer?.cancel();
     _dlStallTimer = null;
+    _dlPrepareTimer?.cancel();
+    _dlPrepareTimer = null;
+    _dlAwaitingReady = false;
     _downloading = false;
     try {
       await _dlSink?.flush();
@@ -720,6 +834,10 @@ class XyrixAdapter extends BleDeviceAdapter {
     _dlSource = null;
     debugPrint('[Xyrix] 下载结束 state=$endState received=$received/'
         'expected=$_dlTotalBytes file=${outFile?.path}');
+    if (Config.selfTestXyrix) {
+      _appendSelfTestLog(
+          '[下载] 结束 state=$endState received=$received/expected=$_dlTotalBytes');
+    }
     _emitDownloadProgress(endState, force: true);
     if (endState == TransferState.completed &&
         outFile != null &&
@@ -729,6 +847,12 @@ class XyrixAdapter extends BleDeviceAdapter {
         recordStartTime: source.startTime,
         fileSn: source.sn,
       )));
+      // 下载完成后自动刷新设备文件列表（同步"已下载"标识所依赖的列表）
+      Timer(const Duration(seconds: 2), () {
+        listFiles().then((files) {
+          debugPrint('[Xyrix] 下载完成后自动刷新列表：${files.length} 个文件');
+        }).catchError((_) {});
+      });
     }
     if (endState == TransferState.failed && outFile != null && received == 0) {
       // 一个字节都没收到就失败：清掉空文件避免留垃圾

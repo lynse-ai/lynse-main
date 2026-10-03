@@ -1,5 +1,5 @@
 /// 真机抓包重放测试：2026-09-24 19:50 会话原始字节，按不同 BLE 通知分包
-/// 边界重放，直接驱动生产代码 `XyrixNotificationRouter`。
+/// 边界重放，直接驱动生产代码 `XyrixStreamRouter`。
 ///
 /// 对应联调问题：「设备回了列表但 app 不显示」（0x05 与结束 ACK 同通知时
 /// 帧解码抢先消费 ACK 导致列表静默丢失）与「实时 OPUS 需要本地落盘」。
@@ -28,7 +28,7 @@ void main() {
       test('通知分包 $chunkSize B → 解析出全部 23 个文件', () {
         final seg = _seg(_listSegmentB64);
         final lists = <List<RecordingFile>>[];
-        final router = XyrixNotificationRouter(
+        final router = XyrixStreamRouter(
           onFrame: (_) {},
           onFileList: lists.add,
           onOpusPacket: (_) {},
@@ -56,7 +56,7 @@ void main() {
       test('通知分包 $chunkSize B → 15 包 / 2303B 载荷 / 序列号连续', () {
         final seg = _seg(_rtSegmentB64);
         final packets = <XyrixOpusPacket>[];
-        final router = XyrixNotificationRouter(
+        final router = XyrixStreamRouter(
           onFrame: (_) {},
           onFileList: (_) {},
           onOpusPacket: packets.add,

@@ -111,12 +111,20 @@ class DevicePage extends StatelessWidget {
         const SizedBox(height: 12),
 
         // ---- 4. 文件列表卡 ----
-        Obx(() => _FileListCard(
-              files: c.deviceFiles,
-              empty: !c.connectionPhase.value.isUsable,
-              onRefresh: c.refreshFiles,
-              onDownload: c.downloadDeviceFile,
-            )),
+        // deviceFiles 必须在 Obx 闭包内读取（toList）：只传引用不会建立
+        // 订阅，列表更新时卡片永远不刷新（联调实测的"列表解析了但 UI 空"）
+        Obx(() {
+          final files = c.deviceFiles.toList();
+          return _FileListCard(
+            files: files,
+            empty: !c.connectionPhase.value.isUsable,
+            isDownloaded: c.isDownloaded,
+            onRefresh: c.refreshFiles,
+            // 行点默认走蓝牙下载（实测稳定）；"快传"按钮走 WiFi 热点+TCP
+            onDownload: (f) => c.downloadDeviceFile(f, useWifi: false),
+            onQuickTransfer: (f) => c.downloadDeviceFile(f, useWifi: true),
+          );
+        }),
       ],
     );
   }
@@ -353,6 +361,13 @@ class _TransferCard extends StatelessWidget {
 
   final TransferProgress progress;
 
+  static String _fmtSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+
   @override
   Widget build(BuildContext context) {
     return LCard(
@@ -378,8 +393,9 @@ class _TransferCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '第 ${progress.currentFileIndex + 1} 个文件 · '
-            '${progress.currentPacket}/${progress.totalPacket} 包',
+            '${_fmtSize(progress.receivedBytes ?? 0)} / '
+            '${_fmtSize(progress.totalBytes ?? 0)}'
+            ' · ${(progress.fraction * 100).toStringAsFixed(0)}%',
             style: LType.small,
           ),
         ],
@@ -396,14 +412,20 @@ class _FileListCard extends StatelessWidget {
   const _FileListCard({
     required this.files,
     required this.empty,
+    required this.isDownloaded,
     required this.onRefresh,
     required this.onDownload,
+    required this.onQuickTransfer,
   });
 
   final List<RecordingFile> files;
   final bool empty;
+  final bool Function(String name) isDownloaded;
   final Future<void> Function() onRefresh;
   final ValueChanged<RecordingFile> onDownload;
+
+  /// WiFi 热点+TCP 快传（整行点击之外的显式按钮）
+  final ValueChanged<RecordingFile> onQuickTransfer;
 
   @override
   Widget build(BuildContext context) {
@@ -437,16 +459,26 @@ class _FileListCard extends StatelessWidget {
               ),
             )
           else
-            ...files.map((f) => LLinkRow(
-                  icon: Icons.audio_file_outlined,
-                  title: f.name,
-                  subtitle:
-                      '${(f.sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB'
-                      ' · ${f.scene == RecordScene.call ? '通话' : '会议'}',
-                  // 整行可点：直接触发音频外传快传（热点 + TCP）
-                  onTap: () => onDownload(f),
-                  trailing: LButton(label: '快传', small: true, onPressed: () => onDownload(f)),
-                )),
+            ...files.map((f) {
+              final downloaded = isDownloaded(f.name);
+              return LLinkRow(
+                icon: downloaded ? Icons.download_done : Icons.audio_file_outlined,
+                title: f.name,
+                subtitle:
+                    '${(f.sizeBytes / 1024 / 1024).toStringAsFixed(1)} MB'
+                    '${downloaded ? " · 已下载" : ""}'
+                    ' · ${f.scene == RecordScene.call ? '通话' : '会议'}',
+                // 整行可点：蓝牙下载（实测稳定路径）；已下载则禁用
+                onTap: downloaded ? null : () => onDownload(f),
+                trailing: downloaded
+                    ? const LChip(label: '已下载', tint: LColors.green)
+                    : LButton(
+                        label: '快传',
+                        small: true,
+                        onPressed: () => onQuickTransfer(f),
+                      ),
+              );
+            }),
         ],
       ),
     );
