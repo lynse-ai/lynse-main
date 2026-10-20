@@ -34,6 +34,33 @@ enum TransferTransport { ble, wifi }
 /// 文件传输状态
 enum TransferState { idle, transferring, completed, failed, cancelled }
 
+/// 传输完整性判定：字节数与权威期望大小（设备 0x2D 应答确认的大小）是否吻合。
+///
+/// 只有 [verified] 的产物才可入库/标记已下载——`completed` 只代表链路结束，
+/// 不代表内容完好。
+enum TransferIntegrity {
+  /// 落盘字节 == 期望字节，且传输期间无过收
+  verified,
+
+  /// 落盘字节与期望不符（少收或多收），文件内容不可信
+  sizeMismatch,
+
+  /// 期望大小未知（设备未确认且列表未上报），无法校验
+  unverified,
+}
+
+/// 一次传输的终止意图：决定断点文件是否保留。
+enum TransferStopIntent {
+  /// 仍在进行中
+  none,
+
+  /// 用户主动取消：断点作废，不留半成品
+  userCancelled,
+
+  /// 链路意外中断（掉线/断流/进程被杀）：保留断点，下次自动续传
+  interrupted,
+}
+
 /// OTA / 固件升级状态（对齐 Neview 插件 0=STARTED 1=PROGRESS 2=SUCCESS 3=FAILED）
 enum FirmwareState { idle, started, progress, success, failed }
 
@@ -51,6 +78,9 @@ enum HardwareErrorCode {
   connectionLost,
   transferInterrupted,
   unsupportedCapability,
+
+  /// 传输结束但字节数与设备确认大小不符：内容不可信，不得入库
+  integrityMismatch,
 
   /// 设备返回失败
   deviceError,
@@ -194,6 +224,9 @@ class TransferProgress {
   final int? receivedBytes;
   final int? totalBytes;
 
+  /// 终止时的完整性判定（进行中为 null）
+  final TransferIntegrity? integrity;
+
   const TransferProgress({
     this.state = TransferState.idle,
     this.currentFileIndex = 0,
@@ -202,6 +235,7 @@ class TransferProgress {
     this.speedKbps = 0,
     this.receivedBytes,
     this.totalBytes,
+    this.integrity,
   });
 
   /// 0.0 - 1.0
@@ -227,13 +261,30 @@ class ImportedRecording {
   /// 设备内文件序号（BLE 下载/WiFi 快传时携带）
   final int? fileSn;
 
+  /// 设备侧的原始文件名；上层据此标记「已下载」，不再靠剥本地路径前缀
+  final String? deviceFileName;
+
   final RecordScene scene;
+
+  /// 完整性判定结果与参与判定的两个字节数（期望未知时为 0）
+  final TransferIntegrity integrity;
+  final int expectedBytes;
+  final int actualBytes;
 
   const ImportedRecording({
     required this.filePath,
     this.recordStartTime,
     this.durationMs,
     this.fileSn,
+    this.deviceFileName,
     this.scene = RecordScene.unknown,
+    this.integrity = TransferIntegrity.unverified,
+    this.expectedBytes = 0,
+    this.actualBytes = 0,
   });
+
+  /// 明确校验不通过（字节数与期望不符）：任何上层都不得把它当录音使用。
+  /// [TransferIntegrity.unverified] 不在此列——那代表厂商 SDK 自行负责完整性
+  /// （Neview 路径），不是"我们发现它坏了"。
+  bool get isRejected => integrity == TransferIntegrity.sizeMismatch;
 }

@@ -141,6 +141,20 @@ abstract final class XyrixFrameCodec {
     );
   }
 
+  /// 解析「查询存储空间」(0x2E) 响应：8 字节 = `[4B 总容量][4B 剩余容量]`，
+  /// 大端，单位 KB。字节布局取自 2026-10-05 真机实测，依据见 XyrixCommands。
+  /// 长度不足 8 字节返回 null（不猜半截数据）。
+  static ({int totalKb, int freeKb})? parseStorage(List<int> data) {
+    if (data.length < 8) return null;
+    int be(int o) =>
+        (data[o] << 24) | (data[o + 1] << 16) | (data[o + 2] << 8) | data[o + 3];
+    final total = be(0);
+    final free = be(4);
+    // 剩余 > 总容量 = 字段顺序与实测相反或数据被截断，宁可判未知也不给错数
+    if (total <= 0 || free > total) return null;
+    return (totalKb: total, freeKb: free);
+  }
+
   /// 组「WiFi 断点续传」数据：路径 hex + 4 字节大端断点值
   static Uint8List wifiResumeData(String path, int resumeOffset) {
     final pathBytes = utf8.encode(path);

@@ -54,12 +54,21 @@ abstract class BleDeviceAdapter {
   Future<List<RecordingFile>> listFiles();
 
   /// 下载设备内录音文件，导入完成后经 [FileImportedEvent] 推送。
+  ///
+  /// [resume]：存在同名未完成断点时从断点继续。只有协议支持字节偏移的通道
+  /// 能真正续传（WiFi 快传的 0x46 携带 4 字节偏移）；BLE 通道无偏移能力，
+  /// 适配器会忽略断点并从 0 重传。
   Future<void> downloadFile(
     RecordingFile file, {
-    TransferTransport transport = TransferTransport.wifi,
+    TransferTransport transport = TransferTransport.ble,
     bool autoDelete = false,
+    bool resume = true,
   });
 
+  /// 用户主动取消进行中的传输。
+  ///
+  /// 与掉线/断流的区别在于**意图**：主动取消会丢弃已收断点（用户明确不要
+  /// 这份文件了），意外中断则保留断点等待下次续传。
   Future<void> cancelDownload();
 
   Future<void> deleteFile(RecordingFile file);

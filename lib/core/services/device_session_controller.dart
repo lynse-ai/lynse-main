@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:dting/config/config.dart';
 import 'package:dting/core/hardware/hardware_kit.dart';
+import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
@@ -125,6 +126,7 @@ class DeviceSessionController extends GetxController {
           _arbiter.release(ExclusiveResource.recording);
           _arbiter.release(ExclusiveResource.fileTransfer);
           _arbiter.release(ExclusiveResource.firmwareUpgrade);
+          _applyTransferGuard(false, null);
         }
         break;
       case BatteryEvent(battery: final status):
@@ -156,18 +158,35 @@ class DeviceSessionController extends GetxController {
         break;
       case TransferProgressEvent(:final progress):
         transferProgress.value = progress;
+        _applyTransferGuard(switch (progress.state) {
+          TransferState.transferring => true,
+          _ => false,
+        }, progress);
         break;
       case FileImportedEvent(:final recording):
+        // 明确校验失败的字节绝不进入「已下载」，也不当作一条录音
+        if (recording.isRejected) {
+          lastImported.value = null;
+          sessionNotice.value = SessionNotice(
+            '文件校验未通过',
+            '已收字节与设备记录不一致，本次下载已丢弃，请重新下载',
+            isError: true,
+          );
+          break;
+        }
         lastImported.value = recording;
-        // 下载完成的设备文件标记为已下载（BLE 下载路径文件名形如
-        // xyrix_dl_<设备文件名>）
-        final name = recording.filePath.split('/').last;
-        if (name.startsWith('xyrix_dl_')) {
-          markDownloaded(name.substring('xyrix_dl_'.length));
+        final name = recording.deviceFileName;
+        if (name != null && name.isNotEmpty) {
+          markDownloaded(name);
         }
         break;
       case FirmwareEvent e:
         firmwareEvent.value = e;
+        _applyTransferGuard(
+          e.state == FirmwareState.started || e.state == FirmwareState.progress,
+          null,
+          label: '正在升级录音卡固件 ${e.progressPercent}%',
+        );
         break;
       case BluetoothOffEvent():
         connectionPhase.value = ConnectionPhase.disconnected;
@@ -180,6 +199,30 @@ class DeviceSessionController extends GetxController {
         wifiStatus.value = status;
         break;
     }
+  }
+
+  /// 传输 / 固件升级期间挂 Android 前台服务保活，终止即释放。
+  ///
+  /// 只在状态真正翻转时走一次 MethodChannel——进度事件约每 250ms 一条，
+  /// 不去重会把通道打爆。
+  bool _transferGuardActive = false;
+
+  void _applyTransferGuard(bool needed, TransferProgress? progress,
+      {String? label}) {
+    if (needed == _transferGuardActive) return;
+    _transferGuardActive = needed;
+    if (needed) {
+      NvEasyPlugin().startTransferGuard(label: label ?? _transferLabel(progress));
+    } else {
+      NvEasyPlugin().stopTransferGuard();
+    }
+  }
+
+  static String _transferLabel(TransferProgress? p) {
+    final total = p?.totalBytes ?? 0;
+    if (total <= 0) return '正在与录音卡同步文件';
+    String mb(int bytes) => (bytes / 1024 / 1024).toStringAsFixed(1);
+    return '正在同步录音文件 ${mb(p?.receivedBytes ?? 0)} / ${mb(total)} MB';
   }
 
   /// 自测链路日志：写入 Documents/xyrix_selftest_report.txt（与适配器共用）
@@ -235,6 +278,9 @@ class DeviceSessionController extends GetxController {
         'vendorId': device.vendorId,
         'deviceId': device.deviceId,
         'name': device.name,
+        // SN 只在扫描到的广播厂商数据里拿得到（0xFF 查设备号这版固件不回），
+        // 自动重连不走扫描，不一起存下来界面就只显示「--」
+        'serialNumber': deviceInfo.value?.serialNumber,
       }),
     );
   }
@@ -263,6 +309,12 @@ class DeviceSessionController extends GetxController {
       name: (map['name'] as String?) ?? '上次设备',
       rssi: 0,
     );
+    // 先把存下来的 SN 填回去：DeviceInfoEvent 的归并逻辑对 null 字段保留旧值，
+    // 所以这一步能让自动重连后的界面照常显示 SN，而不是「--」
+    final savedSn = map['serialNumber'] as String?;
+    if (savedSn != null && savedSn.isNotEmpty) {
+      deviceInfo.value = DeviceHardwareInfo(serialNumber: savedSn);
+    }
     try {
       await connect(device);
       sessionNotice.value = SessionNotice('已自动连接', device.name);
@@ -353,7 +405,7 @@ class DeviceSessionController extends GetxController {
   }
 
   Future<void> downloadDeviceFile(RecordingFile file,
-      {bool useWifi = true}) async {
+      {bool useWifi = true, bool resume = true}) async {
     final adapter = active;
     if (adapter == null) return;
     try {
@@ -362,11 +414,22 @@ class DeviceSessionController extends GetxController {
               adapter.capabilities.supports(HardwareCapability.wifiTransfer)
           ? TransferTransport.wifi
           : TransferTransport.ble;
-      await adapter.downloadFile(file, transport: transport);
+      await adapter.downloadFile(file, transport: transport, resume: resume);
     } on HardwareException catch (e) {
       lastError.value = e.message;
     } finally {
       _arbiter.release(ExclusiveResource.fileTransfer);
+    }
+  }
+
+  /// 用户主动中止进行中的传输：断点作废，不会在下次自动续传。
+  Future<void> cancelTransfer() async {
+    final adapter = active;
+    if (adapter == null) return;
+    try {
+      await adapter.cancelDownload();
+    } on HardwareException catch (e) {
+      lastError.value = e.message;
     }
   }
 
@@ -387,6 +450,7 @@ class DeviceSessionController extends GetxController {
 
   @override
   void onClose() {
+    _applyTransferGuard(false, null);
     for (final sub in _subs.values) {
       sub.cancel();
     }

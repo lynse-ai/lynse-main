@@ -343,10 +343,13 @@ class NeviewAdapter extends BleDeviceAdapter {
   @override
   Future<void> downloadFile(
     RecordingFile file, {
-    TransferTransport transport = TransferTransport.wifi,
+    TransferTransport transport = TransferTransport.ble,
     bool autoDelete = false,
+    bool resume = true,
   }) async {
     // TODO(原生): 下载通道补充 autoDelete 透传。
+    // 续传由 NvEasyBle AAR 内部按 SN 记偏移，Dart 侧无可用的偏移接口，
+    // resume 只作为调用方意图的记录，不影响本通道行为。
     if (transport == TransferTransport.wifi &&
         capabilities.supports(HardwareCapability.wifiTransfer)) {
       await NvEasyPlugin().downLoadFileWifi(file.sn);

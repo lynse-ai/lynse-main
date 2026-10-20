@@ -161,10 +161,29 @@ class XyrixStreamRouter {
 
   /// 喂入一条 BLE 通知
   void feed(List<int> value) {
-    final merged = Uint8List.fromList([..._rx, ...value]);
+    final incoming = Uint8List.fromList(value);
+    if (_sawOpusTraffic && _rx.isEmpty && !_list.collecting &&
+        _startsControlFrame(incoming)) {
+      // 设备会把一条控制帧单独放在一条通知里发（真机实测
+      // `ff 55 aa 01 21 01 ff 55 aa 00 2f` 独占一条 11B 通知）。
+      // 出现音频流之后标记间的字节不再按帧解（载荷里的随机字节会撞上命令码），
+      // 但通知边界上的完整帧是可信的——不设这条通路，录音之后的 0x20/0x2E
+      // 等响应会被永久丢掉（2026-10-05 真机即因此误判「设备不回热点」）。
+      _decodeFrames(incoming);
+      return;
+    }
+    final merged = Uint8List.fromList([..._rx, ...incoming]);
     _rx = Uint8List(0);
     _scan(merged, 0);
   }
+
+  /// 一条通知是否起手就是一条完整控制帧
+  static bool _startsControlFrame(Uint8List chunk) => chunk.length >= 5 &&
+      chunk[0] == 0xFF &&
+      chunk[1] == 0x55 &&
+      chunk[2] == 0xAA &&
+      chunk[4] != XyrixCommands.opusData &&
+      chunk[4] != XyrixCommands.fileList;
 
   /// 从 [pos] 起扫描 [chunk]，处理 marker/明文/包，尾部留存 _rx
   void _scan(Uint8List chunk, int pos) {

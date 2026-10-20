@@ -9,6 +9,7 @@ library;
 export 'ble_device_adapter.dart';
 export 'hardware_event.dart';
 export 'models.dart';
+export 'transfer_target.dart';
 export 'neview/neview_adapter.dart';
 export 'xyrix/xyrix_adapter.dart';
 export 'xyrix/xyrix_commands.dart';
