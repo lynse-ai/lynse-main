@@ -393,10 +393,16 @@ class _TransferCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '${_fmtSize(progress.receivedBytes ?? 0)} / '
-            '${_fmtSize(progress.totalBytes ?? 0)}'
-            ' · ${(progress.fraction * 100).toStringAsFixed(0)}%',
-            style: LType.small,
+            progress.state == TransferState.failed
+                ? '传输失败，请重试'
+                : progress.state == TransferState.cancelled
+                    ? '传输已取消'
+                    : '${_fmtSize(progress.receivedBytes ?? 0)} / '
+                        '${_fmtSize(progress.totalBytes ?? 0)}'
+                        ' · ${(progress.fraction * 100).toStringAsFixed(0)}%',
+            style: progress.state == TransferState.failed
+                ? LType.small.copyWith(color: LColors.danger)
+                : LType.small,
           ),
         ],
       ),

@@ -287,7 +287,8 @@ class DeviceSessionController extends GetxController {
 
   /// 自动重连上次连接的设备。iOS 对连过的外设有系统级缓存，
   /// 直连不需要设备正在广播；设备休眠/没电时会以超时失败告终。
-  Future<void> autoReconnect() async {
+  /// [attempts] 次重试（间隔 8s），覆盖设备晚开机的情况。
+  Future<void> autoReconnect({int attempts = 3}) async {
     if (connectionPhase.value.isUsable && connectedDevice.value != null) {
       return;
     }
@@ -315,16 +316,31 @@ class DeviceSessionController extends GetxController {
     if (savedSn != null && savedSn.isNotEmpty) {
       deviceInfo.value = DeviceHardwareInfo(serialNumber: savedSn);
     }
-    try {
-      await connect(device);
-      sessionNotice.value = SessionNotice('已自动连接', device.name);
-    } catch (e) {
-      sessionNotice.value = SessionNotice(
-        '自动重连失败',
-        '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
-        isError: true,
-      );
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      if (connectionPhase.value.isUsable && connectedDevice.value != null) {
+        return;
+      }
+      try {
+        await connect(device);
+        sessionNotice.value = SessionNotice('已自动连接', device.name);
+        return;
+      } catch (e) {
+        if (attempt < attempts) {
+          await Future<void>.delayed(const Duration(seconds: 8));
+        }
+      }
     }
+    sessionNotice.value = SessionNotice(
+      '自动重连失败',
+      '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
+      isError: true,
+    );
+    }
+    Get.snackbar(
+      '自动重连失败',
+      '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
+      snackPosition: SnackPosition.TOP,
+    );
   }
 
   Future<void> disconnect() async {
