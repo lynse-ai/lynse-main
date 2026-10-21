@@ -313,14 +313,20 @@ class XyrixProbe {
       command: XyrixCommands.hiddenHotspot,
       minLevel: levelHotspot,
       mutating: true,
-      action: () => Config.wifiServerOverride.isEmpty
+      action: () => Config.wifiApCredential.isNotEmpty
+          // 带外参数已经拿到（计划文件 `ap=`），4 分钟的规则穷举就没有必要了，
+          // 而且它会反复发 0x11 改热点名——能不发就不发
+          ? Future.value('已配置带外 AP 参数，跳过热点凭证 hunt')
+          : Config.wifiServerOverride.isEmpty
           // 真·找规则时才跑这 4 分钟穷举；替身服务器模式下跳过，
           // 让「数据通路自检」能反复快速迭代
-          ? huntHotspotCredentials()
-          : Future.value('替身服务器模式，跳过热点凭证 hunt'),
+              ? huntHotspotCredentials()
+              : Future.value('替身服务器模式，跳过热点凭证 hunt'),
     ),
-    // 数据通路自检：配了 `tcp=ip:port` 就把 TCP 指到替身服务器，跳过开热点与
-    // 入网两步，专验 0x46→TCP→.part→finalize→完整性。没配就如实报缺参数。
+    // WiFi 快传闭环。三种参数决定它跑成什么：
+    //   `tcp=ip:port` → 替身服务器，跳过开热点与入网，只验数据通路本身；
+    //   `ap=SSID:密码` → 真实链路（0x21 → 入网 → 0x46 → TCP → 逐字节校验）；
+    //   都不配 → 明确报「缺带外参数」，不会拿超时冒充「设备不支持」。
     XyrixProbeStep(
       name: 'wifi快传闭环',
       command: -1,
@@ -525,31 +531,15 @@ class XyrixProbe {
       const [],
       expect: XyrixCommands.closeWifi,
     );
-    // 工厂配置这条路：文档把 0xF1 写成「设置 WiFi SSID 和密码」。
-    // 若出厂就没写凭证，0x20/0x21 大概率只会回一个 [01]「命令收到」而开不出 AP——
-    // 这正是我们看到的形状。先把名字/密码写进去，再开热点，值得一试。
-    host.log('[热点hunt] 0x11 变体全失败，改试「0xF1 写凭证 → 0x21」');
-    await host.exchange(
-      XyrixCommands.setWifiCredentials,
-      XyrixFrameCodec.pathData('$ssid $pwd'),
-      expect: XyrixCommands.setWifiCredentials,
-    );
-    await host.exchange(
-      XyrixCommands.openHotspotTcp,
-      const [],
-      expect: XyrixCommands.openHotspotTcp,
-    );
-    final f1 = await host.joinHotspot(ssid, pwd, 25);
-    host.log('[热点hunt] 0xF1+0x21: $f1');
-    tried.add('0xF1写凭证/0x21→$f1');
-    await host.exchange(
-      XyrixCommands.closeWifi,
-      const [],
-      expect: XyrixCommands.closeWifi,
-    );
-    if (f1.startsWith('已连上')) return '命中 0xF1 写凭证 → 0x21；其余 $tried';
-    return '0x11 全部 ${variants.length * 2} 种发法 + 0xF1 写凭证，'
-        '手机都没连上 $ssid：${tried.join(' ; ')}';
+    // ⛔ 不再试「0xF1 写 WiFi 凭证」这条路。文档把 0xF1 记作「设置 WiFi SSID 和密码」，
+    // 属于**出厂信息写入**，与 0xF4 写 SN 同一类：写错就不可恢复。2026-10-21 之前
+    // 它确实被发过一次（当时以为卡的 WiFi 没被使能），而卡之后仍然广播
+    // `AP_` + SN 形状的名字与固定口令，说明这条命令对本版固件没有可见效果——
+    // 既然带外参数已经拿到，就没有理由再拿一张产品卡去赌它。
+    host.log('[热点hunt] 跳过 0xF1 出厂凭证写入（不可恢复，且已证明对本固件无效）');
+    tried.add('0xF1→按策略不再尝试');
+    return '0x11 全部 ${variants.length * 2} 种发法都没让手机连上 $ssid：'
+        '${tried.join(' ; ')}；真实链路请改用计划文件第二行 `ap=SSID:口令`';
   }
 
   static List<int> _lenPrefixed(String ssid, String pwd) => [

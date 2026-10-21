@@ -5,6 +5,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:dting/core/hardware/xyrix/hotspot_connector.dart';
 import 'package:dting/core/hardware/xyrix/xyrix_wifi_transfer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -66,6 +67,49 @@ void main() {
     test('空数据返回 null', () {
       expect(XyrixHotspotCredentials.parse(const []), isNull);
       expect(XyrixHotspotCredentials.parse([0x00, 0xFF]), isNull);
+    });
+  });
+
+  group('normalizeSsid', () {
+    // 真机踩过的坑：手机已经在卡的 AP 上，App 却判成没连上，
+    // 因为 WifiInfo.getSsid() 带首尾双引号，比相等必然失败。
+    test('剥掉 Android 返回的双引号包装', () {
+      expect(normalizeSsid('"AP_0000000000000000"'), 'AP_0000000000000000');
+      // 归一化之后才允许跟设备热点名比相等
+      expect(normalizeSsid('"AP_0000000000000000"') == 'AP_0000000000000000',
+          isTrue);
+    });
+
+    test('unknown ssid 归一为空串（不能当成「连上了某个网」）', () {
+      expect(normalizeSsid('<unknown ssid>'), '');
+      expect(normalizeSsid('"<unknown ssid>"'), '');
+    });
+
+    test('干净值与 null 原样通过', () {
+      expect(normalizeSsid('sherrymm-5G'), 'sherrymm-5G');
+      expect(normalizeSsid('  Xyrix  '), 'Xyrix');
+      expect(normalizeSsid(null), '');
+      expect(normalizeSsid('"'), '"'); // 单个引号不构成包装，别把内容吃掉
+    });
+  });
+
+  group('parseApParams（带外热点参数）', () {
+    test('按第一个冒号切分，口令里的冒号原样保留', () {
+      final c = XyrixHotspotCredentials.parseApParams('AP_TEST:12:34:56');
+      expect(c!.ssid, 'AP_TEST');
+      expect(c.password, '12:34:56');
+    });
+
+    test('没有冒号 = 开放网络', () {
+      final c = XyrixHotspotCredentials.parseApParams('AP_TEST');
+      expect(c!.ssid, 'AP_TEST');
+      expect(c.password, isEmpty);
+    });
+
+    test('空串/只有冒号 = 没配参数，返回 null 让调用方明确报错', () {
+      expect(XyrixHotspotCredentials.parseApParams(''), isNull);
+      expect(XyrixHotspotCredentials.parseApParams('   '), isNull);
+      expect(XyrixHotspotCredentials.parseApParams(':pw-with-colon'), isNull);
     });
   });
 }

@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased（2026-10-21 第十三轮：**WiFi 快传真机闭环 —— 五项全通**）
+
+- 结论先说：`0x21 开热点+起 TCP` → 手机入网 → BLE 发 `0x46 [0:/文件名][4B 大端偏移]`
+  → TCP **`192.168.1.80:5000`**（文档默认值，终于验实）→ 收流落盘，
+  77,952 B 的录音 **`integrity=verified`**，且落地文件与蓝牙下载的同一文件
+  **SHA-256 逐字节相同**（`e1ab7a99…b135a1`）。第 4 项通了，五项全绿。
+- **流的形状**：设备推的是**文件原始字节**，末尾追加 20 B `sendfile finish!` + 4×NUL
+  收尾标记。新增 `XyrixWifiStreamSplitter` 按标记收流；标记不写盘。
+  之前正是把这 20 B 算进文件长度，才让一次**已经成功**的快传被判成「数据流被污染」
+  （断点越界时设备只回这个标记，于是每轮都"过收"20 B，连判 5 轮失败）。
+- **TCP 选路判据改成「谁真的推字节」而不是「谁接受了 connect」**：
+  手机进了卡热点后仍能到家里路由器，`192.168.1.1:80` 握手成功却零字节，
+  旧实现「取第一个连上的 socket」会把路由器当成卡的服务器，然后空等 15 s。
+  现在候选端点并发拨号、并发监听，探测期字节先进缓冲不丢（`_TcpProbe`），
+  赢家装好回调后一次性补交，每个字节恰好投递一次。
+- **断链续传**：卡的 AP 会在手机重复关联时把客户端踢掉（`reason=6`），手机随即漫游回
+  有互联网的家用网。会话改成「一轮拿一段：重新 `0x21` → 等手机回到 AP →
+  按 `0x46` 偏移续传」，上限 10 轮；每轮各自记录字节数，跑完能答出断在哪。
+- 两个把链路挡住的实现级 bug：
+  ① `WifiInfo.getSsid()` 带首尾双引号，`"AP_…"` 与 `AP_…` 比相等必然失败——
+  手机明明已在卡上（`cmd wifi status` 直接显示），App 却判「没连上」并顺手关了热点。
+  新增 `normalizeSsid`（Kotlin 侧同样剥引号，`<unknown ssid>` 归一为空）。
+  ② 设备不回传凭证时不再直接抛错：新增带外参数 `ap=SSID:口令`（协议里确实没有
+  设备下发 SSID/密码这一步），`host=ip:port` 可把拨号收窄到明确端点。
+- **吞吐实测，别按名字选通道**：同一张卡、同一个 77,952 B 文件、同一台 Mate 40——
+  蓝牙 887 ms ≈ **86 KB/s**，WiFi 快传 3.33 s ≈ **23 KB/s**。**本版固件的「快传」比蓝牙慢一倍以上。**
+- 探测台：配了带外 AP 参数就不再跑 4 分钟的热点凭证 hunt；
+  **`0xF1 设置 WiFi SSID 和密码` 从 hunt 里移除**（出厂信息写入，与 `0xF4` 写 SN 同类，
+  写错不可恢复，且已证明对本固件无可见效果），测试里加了断言防止有人加回来。
+- 口令不再进日志：凭证帧文本打码后打印，`HardwareException` 面向用户的文案里不含 SSID。
+- 测试：新增 `test/xyrix_wifi_stream_splitter_test.dart`（含「标记被 TCP 从任意位置切开
+  都能认出」的 19 种切点穷举），`xyrix_hotspot_credentials_test.dart` 补 `normalizeSsid`
+  与 `parseApParams`，`flutter test` 94 项全绿。顺手修了 `xyrix_probe_test.dart` 里
+  缺 `runTextCommandProbe` 导致的编译失败（上一轮加接口时漏改替身）。
+- 未验到的点，别当成已验：iOS 侧 `NEHotspotConfiguration` 这条路本轮没上真机
+  （Mate 40 是 Android）；Kotlin 适配层仍不声明 `WIFI_FAST_TRANSFER`（见 SDK CHANGELOG）。
+
 ## Unreleased（2026-10-19 第十二轮：真机产出**可播放** Ogg Opus —— 第 5 项通了）
 
 - 把 `XyrixChunkAccumulator` + `XyrixOpusMuxer` 接进实时捕获落盘路径：

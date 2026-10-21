@@ -8,6 +8,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(NvEasyPlugin(application, this))
+        flutterEngine.plugins.add(HotspotChannel())
 
     }
 }

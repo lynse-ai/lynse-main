@@ -854,6 +854,10 @@ class XyrixAdapter extends BleDeviceAdapter implements XyrixProbeHost {
             Config.downloadNewest = true;
           } else if (opt.startsWith('tcp=')) {
             Config.wifiServerOverride = opt.substring(4);
+          } else if (opt.startsWith('ap=')) {
+            Config.wifiApCredential = opt.substring(3);
+          } else if (opt.startsWith('host=')) {
+            Config.wifiTcpTarget = opt.substring(5);
           } else if (opt.startsWith('mtu=')) {
             Config.dlRequestMtu = int.tryParse(opt.substring(4)) ?? 0;
           }
@@ -861,6 +865,13 @@ class XyrixAdapter extends BleDeviceAdapter implements XyrixProbeHost {
         debugPrint(
           '[Xyrix][探测] 下载选项 downloadIndex=${Config.downloadIndex} '
           'newest=${Config.downloadNewest} name=${Config.downloadNameContains}',
+        );
+        // 只报「有没有配、SSID 前缀」，口令一个字符都不落日志
+        debugPrint(
+          '[Xyrix][探测] 快传参数 '
+          '替身=${Config.wifiServerOverride.isEmpty ? "无" : Config.wifiServerOverride} '
+          '带外AP=${Config.wifiApCredential.isEmpty ? "无" : "${Config.wifiApCredential.split(':').first}/*"} '
+          'TCP端点=${Config.wifiTcpTarget.isEmpty ? "扫描" : Config.wifiTcpTarget}',
         );
       }
       final parts = lines.first.trim().split(RegExp(r'\s+'));

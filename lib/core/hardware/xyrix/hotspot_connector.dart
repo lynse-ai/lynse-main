@@ -52,7 +52,7 @@ class MethodChannelHotspotConnector implements HotspotConnector {
       final r = await _channel
           .invokeMethod<Map<Object?, Object?>>('currentSsid');
       return (
-        ssid: (r?['ssid'] as String?) ?? '',
+        ssid: normalizeSsid(r?['ssid'] as String?),
         linked: (r?['linked'] as bool?) ?? false,
       );
     } catch (_) {
@@ -60,6 +60,29 @@ class MethodChannelHotspotConnector implements HotspotConnector {
       return (ssid: '', linked: false);
     }
   }
+}
+
+/// 归一化系统返回的 SSID。
+///
+/// `WifiInfo.getSsid()` 的原样形态带包装：正常网络是 `"AP_xxx"`（**含首尾双引号**），
+/// 取不到时是 `<unknown ssid>`。不剥引号就拿它跟设备热点名比相等，必然不等——
+/// 2026-10-21 真机就栽在这一个字符上：手机明明已经连上卡的 AP
+/// （`cmd wifi status` 直接显示 `Wifi is connected to "AP_2608…"`），
+/// App 却判成「没连上」，白丢一次快传机会，还顺手把卡的热点关了（0x23）。
+///
+/// 两端都剥（Kotlin 侧同样处理），这里再兜一层，保证任何调用方拿到的都是干净值。
+String normalizeSsid(String? raw) {
+  if (raw == null) return '';
+  var s = raw.trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    s = s.substring(1, s.length - 1);
+  }
+  s = s.trim();
+  if (s.length >= 2 && s.startsWith('<') && s.endsWith('>')) {
+    s = s.substring(1, s.length - 1);
+  }
+  s = s.trim();
+  return s.toLowerCase() == 'unknown ssid' ? '' : s;
 }
 
 class HotspotException implements Exception {

@@ -2,32 +2,38 @@
 ///
 /// 流程（对应命令表 XyrixCommands，顺序按 SDK 文档 §11「WiFi 文件传输时序」）：
 /// 1. BLE 发 `openHotspotTcp`(0x21)：设备开热点并启动 TCP 服务。
-///    ⛔ **2026-10-06 双判据实测：这张卡根本没把 AP 拉起来，整条链路无法自证**。
-///    试了 9 种发法（`0x11` 载荷 = 空格/逗号/NUL/长度前缀 4 种编码 × 「0x11+0x21」
-///    与「0x21 直接带载荷」两种发法，外加「0xF1 工厂写 WiFi 凭证 → 0x21」），
-///    每轮之后同时看两个与设备无关的外部观测：
-///    ① 手机上「已保存的隐藏网络 LYNSEXY」能不能自动连上（`cmd wifi` 建的，
-///      绕开 App 网络建议可能被系统无视这个坑）；
-///    ② `cmd wifi list-scan-results` 每 6s 采一次，43 次采样里 AP 集合从未变化。
-///    两路全负。`0x21/0x23` 回的那帧 `[01]` 是通用「命令收到」——`0x23 关 WiFi`
-///    回的是一模一样的形状，所以它证明不了热点开起来了。
-///    协议里也没有「设备下发 SSID/密码」这一步，缺的是厂商的热点启用规则。
-///    **厂商 Demo 与此一致**：`com.xyrix.ble_demo`「文件传输」页使用说明写的是
-///    「TCP 下载需先手动连接 Wi-Fi 热点，再连接 TCP」，TCP 页只预填
-///    `192.168.1.80:5000` 等用户点连接——Demo 同样不通过 BLE 设凭证，
-///    可见 SSID/密码在厂商体系里是**带外信息**（机身标签 / 硬件手册）。
-///    还排掉一种「卡早就在局域网上、根本不用开热点」的可能：PC 与手机同在
-///    192.168.1.0/24，`ping 192.168.1.80` 100% 丢包、`Test-NetConnection -Port 5000`
-///    返回 False、ARP 表里没有 c4:22:4e 前缀的 MAC——卡从未上过这个网段。
+///    2026-10-21 更正此前的错误结论（「这张卡根本没把 AP 拉起来」）：AP **确实会
+///    广播**，只是两件事当时都判错了——
+///    ① SSID 是 `AP_` + 一串数字（实测 20 字符），此前按厂商口语「AP26****」写成
+///      截断正则 `AP[0-9A-Za-z]{2,14}`，名字被切短 → 入网被拒（Reason 1011）；
+///    ② 观测用的是 `cmd wifi list-scan-results`，这张卡的 AP 从来不出现在那份结果里。
+///      换成 `dumpsys wifi` 后立刻看到 `Wifi is connected to "AP_…"`、RSSI −32。
+///    口令与 SSID 一样是**带外信息**（协议里没有「设备经蓝牙下发凭证」这一步，
+///    文档 §8.11 明确 0x21 附加数据为空、只回一个状态字节），由计划文件 `ap=` 传入。
 /// 2. 手机连热点（iOS NEHotspotConfiguration / Android WifiNetworkSuggestion，
 ///    见 hotspot_connector.dart；Android 侧要判「真连上了」得用 currentSsid，
-///    建议提交成功 ≠ 连上）。
+///    建议提交成功 ≠ 连上）。手机若已在目标 AP 上则跳过重复提交。
 /// 3. BLE 发 `wifiTransferResume`(0x46)：路径 + 4 字节大端断点偏移，触发推流。
-/// 4. TCP 连设备：文档默认 **192.168.1.80:5000**（此前我们从未试过这个端点），
-///    凭证帧若带 IP/端口则优先用它，否则再按本机网段网关与常见端口探测。
-/// 5. 收满 `sizeBytes` 后核对断点文件字节数，相符才改名为正式文件并上报
-///    导入（见 [TransferTarget.finalize]）；随后 BLE 发 `wifiTransferStop`(0x47)
+/// 4. TCP 连设备。**判定标准是「谁真的推字节」，不是「谁接受了 connect」**：
+///    真机上手机进了卡热点后仍能到家里路由器，`192.168.1.1:80` 握手成功却零字节，
+///    光看连接成功会把路由器端口当成卡的服务器。文档默认端点 `192.168.1.80:5000`，
+///    计划文件 `host=` 可把拨号范围收窄到明确地址。
+/// 5. 收流：设备推的是**文件原始字节**，末尾追加 20 字节 `sendfile finish!`+NUL
+///    作为收尾标记（见 [XyrixWifiStreamSplitter]，2026-10-21 与蓝牙下载的同一文件
+///    逐字节对账过）。标记不写盘；看到它即判收满。
+/// 6. 核对断点文件字节数，相符才改名为正式文件并上报导入（见
+///    [TransferTarget.finalize]）；随后 BLE 发 `wifiTransferStop`(0x47)
 ///    + `closeWifi`(0x23) 收尾，并移除手机上的热点配置。
+///
+/// 实测吞吐（同一张卡、同一个 77,952 B 文件、同一台 Mate 40，2026-10-21）：
+/// 蓝牙 887 ms ≈ **86 KB/s**；WiFi 快传从 0x46 到收尾标记 3.33 s ≈ **23 KB/s**
+/// （纯收流段 2.10 s ≈ 34 KB/s），两条通道结果 SHA-256 相同。
+/// ⚠️ 也就是说本版固件的「快传」**比蓝牙还慢一倍以上**，别按名字假设它快——
+/// 选通道要按实测吞吐，或等大文件（几十 MB）场景再复测一次。
+///
+/// 「先 0x46 后连接」与「先连接后 0x46」两种时序在同一轮里都试（见 [run]），
+/// 每轮各自记录收到的字节数——设备才是 TCP 服务端，哪种顺序才对只能由真机定。
+/// 链路断掉（卡的 AP 会把手机 deauth）就按 0x46 的断点偏移续传，跑到收满为止。
 ///
 /// 进度复用 [TransferProgressEvent]/[WifiStatusEvent]，UI 无需感知传输通道差异。
 library;
@@ -35,6 +41,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dting/config/config.dart';
 import 'package:dting/core/hardware/hardware_event.dart';
@@ -65,11 +72,13 @@ class XyrixHotspotCredentials {
   /// 宽松解析：提取可打印 ASCII 后按空白/逗号分词——形如 x.x.x.x 的词
   /// 记为设备 IP，2-5 位纯数字词记为端口，其余按序取 SSID、密码。
   /// 固件实际格式联调确认后在此收严。
+  ///
+  /// 日志只留结构与 SSID：口令一旦进 logcat 就等于进了抓取件，
+  /// 所以命中口令的位置一律打码后再打印。
   static XyrixHotspotCredentials? parse(List<int> data) {
     final text = ascii.decode(data, allowInvalid: true);
     final cleaned = text.replaceAll(RegExp(r'[^\x21-\x7e]'), ' ').trim();
     if (cleaned.isEmpty) return null;
-    debugPrint('[Xyrix][WiFi] 热点凭证帧原始文本: "$cleaned"');
     String? ssid, password, ip;
     int? port;
     for (final token in cleaned.split(RegExp(r'[\s,;]+'))) {
@@ -92,12 +101,31 @@ class XyrixHotspotCredentials {
       }
     }
     if (ssid == null) return null;
+    var shown = cleaned;
+    if (password != null && password.isNotEmpty) {
+      shown = shown.replaceAll(password, '*' * password.length);
+    }
+    debugPrint('[Xyrix][WiFi] 热点凭证帧文本(口令已打码): "$shown"');
     return XyrixHotspotCredentials(
       ssid: ssid,
       password: password ?? '',
       ip: ip,
       port: port,
     );
+  }
+
+  /// 解析**带外**热点参数 `SSID:口令`（探测计划文件第二行 `ap=`）。
+  ///
+  /// 只按第一个冒号切：口令本身可能含冒号。没写冒号 = 开放网络。
+  /// 空串返回 null，表示「没配带外参数」，调用方据此决定报什么错。
+  static XyrixHotspotCredentials? parseApParams(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    final i = s.indexOf(':');
+    if (i < 0) return XyrixHotspotCredentials(ssid: s, password: '');
+    final ssid = s.substring(0, i);
+    if (ssid.isEmpty) return null;
+    return XyrixHotspotCredentials(ssid: ssid, password: s.substring(i + 1));
   }
 }
 
@@ -126,8 +154,15 @@ class XyrixWifiTransferSession {
   /// 一行实测结论，`run()` 返回后给探测台读（走的是 emit 之外的旁路，
   /// 免得为了取个结果去反推事件流）
   String verdict = '未产生结果';
+
+  /// 每种时序各自收到多少字节——失败时的定位价值全在这几行里
+  final List<String> _ordersTried = [];
+
   IOSink? _sink;
   Socket? _socket;
+
+  /// 当前存活的数据通道探测结果（承载监听与缓冲，见 [_TcpProbe]）
+  _TcpProbe? _probe;
 
   /// 断点字节数：本次传输的起点，也是进度条的起点
   int _resumeOffset = 0;
@@ -139,8 +174,18 @@ class XyrixWifiTransferSession {
   bool _finished = false;
   TransferIntegrity? _lastIntegrity;
 
-  /// TCP 数据断流看门狗：15 秒无字节视为传输中断
+  /// TCP 数据断流看门狗：这么久无字节视为传输中断。取值要能容下
+  /// 「先连接、后发 0x46」这种时序里设备的启动耗时
   Timer? _stallTimer;
+  static const _stallTimeout = Duration(seconds: 20);
+
+  /// 「先 0x46 后连接」时，等某个端点真的推出第一个字节的观察窗口
+  static const _firstByteGrace = Duration(seconds: 12);
+
+  /// 续传轮数上限。真机实测卡的 AP 会在推出约 27 KB 后把手机 deauth 掉，
+  /// 一张 78 KB 的文件要 3~4 轮；上限取 10，够跑完一张典型录音，
+  /// 又不至于在链路真的坏了时无限重试。
+  static const _maxRounds = 10;
 
   /// 设备热点网段常见默认端口。5000 是 SDK 文档 tcpConnect() 的默认端口，
   /// 必须排第一（2026-10-06 拿到 XyrixSDK-2 文档才确认，此前我们从未试过它）
@@ -189,79 +234,61 @@ class XyrixWifiTransferSession {
       }
       _sink = target.partFile.openWrite(mode: FileMode.append);
 
-      // ---- 1&2. BLE 开热点 + 手机入网 ----
-      // 厂商的热点启用规则还没给（见文件头：9 种发法 + 三条独立网络层负证据），
-      // 所以留一个替身入口：`Config.wifiServerOverride` 指到局域网上的假服务器，
-      // 跳过这两步，专门验 0x46→TCP→.part→finalize→完整性 这条数据通路本身。
-      final override = Config.wifiServerOverride;
-      if (override.isNotEmpty) {
-        final sp = override.split(':');
-        _creds = XyrixHotspotCredentials(
-          ssid: '',
-          password: '',
-          ip: sp.first,
-          port:
-              int.tryParse(sp.length > 1 ? sp.last : '') ??
-              _candidatePorts.first,
-        );
-        debugPrint(
-          '[Xyrix][WiFi] 替身服务器 ${_creds!.ip}:${_creds!.port}，'
-          '跳过开热点与入网，只验数据通路',
-        );
-        _linkPhase(WifiTransferStatus.connected);
-      } else {
-        _linkPhase(WifiTransferStatus.opening);
-        await sendCommand(XyrixCommands.openHotspotTcp);
-        // 凭证来源：SDK 文档 §8.11 里 0x21「开启热点并打开 TCP 服务器」**附加数据为无、
-        // 也没有响应数据**，真机实测只回 `FF 55 AA 01 21 01` 一个状态字节。也就是说
-        // 「设备经蓝牙把 SSID/密码下发给 App」这个前提在协议里根本不存在，
-        // 文档给的是 0x11「启动隐藏热点：热点名称+密码」——由 App 侧提供参数。
-        // 所以这里只短暂等一帧凭证（万一某版固件真推），拿不到就明确报缺什么，
-        // 不再用 12 秒超时冒充「设备不支持」。
-        _creds = await _credentials.future.timeout(
-          const Duration(seconds: 3),
-          onTimeout:
-              () => const XyrixHotspotCredentials(ssid: '', password: ''),
-        );
-        if (_creds!.ssid.isEmpty) {
-          throw HardwareException(
-            HardwareErrorCode.unsupportedCapability,
-            '设备不回传热点 SSID/密码（0x21 仅回状态字节），需厂商提供热点参数规则'
-            '或改用 0x11 由 App 指定名称与密码',
-          );
-        }
-        debugPrint(
-          '[Xyrix][WiFi] 热点凭证: ssid=${_creds!.ssid} '
-          'password=${_creds!.password} ip=${_creds?.ip} port=${_creds?.port}',
-        );
-        _linkPhase(WifiTransferStatus.opened);
-
-        // ---- 2. 手机连热点 ----
-        _linkPhase(WifiTransferStatus.connecting);
-        await hotspotConnector.connect(_creds!.ssid, _creds!.password);
-        // 等 DHCP 分配完成
-        await Future.delayed(const Duration(milliseconds: 1500));
+      // 断点已经到文件大小 = 上一轮其实收满了（多出来的收尾标记当年被误判成污染，
+      // 于是断点留在完整长度上）。这种情况直接结算，不必再拨号——
+      // 设备对越界偏移只会回那 20 字节标记，问多少次都是它。
+      if (_total > 0 && _resumeOffset >= _total) {
+        debugPrint('[Xyrix][WiFi] 断点 $_resumeOffset 已达文件大小 $_total，直接收尾');
+        await _finish(TransferState.completed);
+        return;
       }
 
-      // ---- 3. BLE 触发传输（文档时序：0x46 先于 tcpConnect）----
-      // 0x46 携带断点偏移，设备从该偏移起经 TCP 推送
-      await sendCommand(
-        XyrixCommands.wifiTransferResume,
-        XyrixFrameCodec.wifiResumeData('0:/${file.name}', _resumeOffset),
-      );
-      _emitProgress(TransferState.transferring, force: true);
+      // ---- 1&2. BLE 开热点 + 手机入网 ----
+      await _openLink();
 
-      // ---- 4. TCP 连设备 ----
-      final socket = await _connectTcp();
-      _socket = socket;
-      _linkPhase(WifiTransferStatus.connected);
-      debugPrint(
-        '[Xyrix][WiFi] TCP 已连接 ${socket.remoteAddress.address}:'
-        '${socket.remotePort}',
-      );
-
-      // ---- 5. 收流落盘 ----
-      await _receive(socket);
+      // ---- 3~5. 触发推流 → 建 TCP 链 → 收流落盘（断一轮就续一轮，直到收满）----
+      // 2026-10-21 真机定案：卡的 TCP 服务器就在**文档默认端点 192.168.1.80:5000**，
+      // 0x46 之后 1 秒内推出 27,360 B，随后卡的 AP 把手机 deauth 掉
+      // （wpa_supplicant `CTRL-EVENT-DISCONNECTED bssid=80:45:6b:… reason=6`），
+      // 手机立刻漫游回有互联网的家用网。所以这条链路**天生会断、必须能续**——
+      // 0x46 本来就带 4 字节断点偏移，一轮拿一段、偏移往前推，跑到收满为止，
+      // 而不是把一次断流当整次失败。
+      Object? lastError;
+      var triggerFirst = true; // 先按文档时序；同一时序连续零进展才换另一种
+      var noProgress = 0;
+      for (var round = 1; round <= _maxRounds; round++) {
+        final label = triggerFirst ? '0x46→TCP' : 'TCP→0x46';
+        try {
+          if (round > 1) await _relink();
+          await _transferOnce(triggerFirst: triggerFirst);
+          lastError = null;
+          if (round > 1) {
+            debugPrint('[Xyrix][WiFi] 第 $round 轮续传收满 $_received/$_total');
+          }
+          break;
+        } catch (e) {
+          lastError = e;
+          final got = _newBytes;
+          _ordersTried.add('R$round/$label +$got B');
+          debugPrint('[Xyrix][WiFi] 第 $round 轮($label)未收满，本轮 +$got B: $e');
+          // 本轮落盘的字节并进断点，下一轮用新的 0x46 偏移续传
+          _resumeOffset += got;
+          _newBytes = 0;
+          if (got == 0) {
+            noProgress++;
+            // 连续两轮一个字节都没有，才怀疑是时序问题，换一种顺序再试
+            if (noProgress >= 2) {
+              triggerFirst = !triggerFirst;
+              noProgress = 0;
+              debugPrint('[Xyrix][WiFi] 换时序为 ${triggerFirst ? "0x46→TCP" : "TCP→0x46"}');
+            }
+          } else {
+            noProgress = 0; // 有进展 = 时序是对的，只是链路断了，继续往前推
+          }
+          await _resetPush();
+        }
+      }
+      if (lastError != null) throw lastError;
       await _finish(TransferState.completed);
     } catch (e) {
       await _finish(
@@ -274,57 +301,280 @@ class XyrixWifiTransferSession {
     }
   }
 
-  Future<Socket> _connectTcp() async {
+  /// 1~2 步：让设备开热点并把手机送进那个 AP，拿到可用的 SSID/口令。
+  ///
+  /// 口令来源优先级：设备经 0x21 响应回传（协议里其实没有这一步，留着是因为
+  /// 万一某版固件真推）→ 计划文件 `ap=SSID:密码` 带外参数 → 明确报缺参数。
+  /// 替身服务器（`tcp=`）仍然支持：它专门验数据通路本身，不用真机就能反复跑。
+  Future<void> _openLink() async {
+    final override = Config.wifiServerOverride;
+    if (override.isNotEmpty) {
+      final sp = override.split(':');
+      _creds = XyrixHotspotCredentials(
+        ssid: '',
+        password: '',
+        ip: sp.first,
+        port: int.tryParse(sp.length > 1 ? sp.last : '') ??
+            _candidatePorts.first,
+      );
+      debugPrint(
+        '[Xyrix][WiFi] 替身服务器 ${_creds!.ip}:${_creds!.port}，'
+        '跳过开热点与入网，只验数据通路',
+      );
+      _linkPhase(WifiTransferStatus.connected);
+      return;
+    }
+
+    _linkPhase(WifiTransferStatus.opening);
+    await sendCommand(XyrixCommands.openHotspotTcp);
+    // 只等一帧凭证（实测 0x21 只回 `FF 55 AA 01 21 01` 一个状态字节），
+    // 拿不到就用带外参数，不再用长超时冒充「设备不支持」。
+    _creds = await _credentials.future.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () => const XyrixHotspotCredentials(ssid: '', password: ''),
+    );
+    var ssid = _creds!.ssid;
+    var password = _creds!.password;
+    var ip = _creds!.ip;
+    var port = _creds!.port;
+    if (ssid.isEmpty) {
+      final ap = XyrixHotspotCredentials.parseApParams(Config.wifiApCredential);
+      if (ap == null) {
+        throw HardwareException(
+          HardwareErrorCode.unsupportedCapability,
+          '设备不回传热点 SSID/密码（0x21 仅回状态字节），且计划文件没给带外参数'
+          '——第二行补 `ap=AP_xxx:口令` 即可走真实热点链路',
+        );
+      }
+      ssid = ap.ssid;
+      password = ap.password;
+      debugPrint(
+        '[Xyrix][WiFi] 热点凭证走带外参数: ssid=$ssid '
+        '口令长度=${password.length}（设备侧不回传）',
+      );
+    } else {
+      debugPrint('[Xyrix][WiFi] 热点凭证来自设备响应帧: ssid=$ssid');
+    }
+    final target = Config.wifiTcpTarget;
+    if (target.isNotEmpty) {
+      ip = target.split(':').first;
+      if (target.contains(':')) {
+        port = int.tryParse(target.split(':').last) ?? port;
+      }
+    }
+    _creds = XyrixHotspotCredentials(
+      ssid: ssid,
+      password: password,
+      ip: ip,
+      port: port,
+    );
+    _linkPhase(WifiTransferStatus.opened);
+
+    // 手机已经在目标 AP 上（联调时常用 adb `cmd wifi connect-network` 先入网）
+    // 就别再提交一遍建议——重复提交反而可能被系统忽略。
+    final cur = await hotspotConnector.currentSsid();
+    if (cur.linked && cur.ssid == ssid) {
+      debugPrint('[Xyrix][WiFi] 手机已在 $ssid，跳过入网');
+      _linkPhase(WifiTransferStatus.connected);
+      return;
+    }
+    _linkPhase(WifiTransferStatus.connecting);
+    await hotspotConnector.connect(ssid, password);
+    // 「系统收下建议」≠「真的连上了」：轮询到连上为止，等不到就如实报
+    final until = DateTime.now().add(const Duration(seconds: 20));
+    var last = cur.ssid;
+    while (DateTime.now().isBefore(until)) {
+      final r = await hotspotConnector.currentSsid();
+      last = r.ssid;
+      if (r.linked && r.ssid == ssid) {
+        // DHCP 拿到地址要一点时间，早一秒拨号就多一次假失败
+        await Future.delayed(const Duration(milliseconds: 1200));
+        debugPrint('[Xyrix][WiFi] 已入网 $ssid');
+        _linkPhase(WifiTransferStatus.connected);
+        return;
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    throw HardwareException(
+      HardwareErrorCode.connectionLost,
+      '手机未能进入设备热点（仍在 "${last.isEmpty ? "未知" : last}"，'
+      '目标 $ssid）。Android 网络建议可能要用户在通知里确认，'
+      '或改用 adb cmd wifi connect-network 预连',
+    );
+  }
+
+  /// 一种时序的完整一遍：触发 + 建链 + 收流。
+  Future<void> _transferOnce({required bool triggerFirst}) async {
+    if (triggerFirst) await _sendTrigger();
+    final probe = await _dial(trigger: triggerFirst ? null : _sendTrigger);
+    _probe = probe;
+    _socket = probe.socket;
+    _linkPhase(WifiTransferStatus.connected);
+    debugPrint(
+      '[Xyrix][WiFi] TCP 选中 ${probe.host}:${probe.port} '
+      '（时序 ${triggerFirst ? "0x46→TCP" : "TCP→0x46"}，建链窗口内已推 ${probe.bytes} B）',
+    );
+    await _receive(probe);
+  }
+
+  /// 3 步：BLE 发 0x46（路径 + 4 字节大端断点偏移），设备从该偏移起经 TCP 推送
+  Future<void> _sendTrigger() async {
+    final data = XyrixFrameCodec.wifiResumeData(
+      '0:/${file.name}',
+      _resumeOffset,
+    );
+    debugPrint(
+      '[Xyrix][WiFi] 触发推流 0x46 path=0:/${file.name} offset=$_resumeOffset '
+      'data=${data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}',
+    );
+    await sendCommand(XyrixCommands.wifiTransferResume, data);
+    _emitProgress(TransferState.transferring, force: true);
+  }
+
+  /// 换时序前先让设备停一下当前推流（0x47）。失败吞掉：这一步不通
+  /// 不该掩盖「两种顺序都没字节」这个真正的结论。
+  Future<void> _resetPush() async {
+    try {
+      await sendCommand(XyrixCommands.wifiTransferStop);
+    } catch (_) {}
+    await Future.delayed(const Duration(seconds: 2));
+  }
+
+  /// 断链重来：重新发 0x21（TCP 服务器随热点一起起），再等手机回到卡的 AP。
+  ///
+  /// 手机被 deauth 后会自己漫游回有互联网的家用网，所以「等」是必须的，
+  /// 不是可选的优化。等不到就如实中止——偏移已经推进到磁盘上的真实长度，
+  /// 下一次会话从断点接着传，不会把已收到的字节再要一遍。
+  Future<void> _relink({int seconds = 30}) async {
+    final ssid = _creds?.ssid ?? '';
+    if (ssid.isEmpty) return; // 替身服务器模式没有 AP 可等
+    await sendCommand(XyrixCommands.openHotspotTcp);
+    final until = DateTime.now().add(Duration(seconds: seconds));
+    var now = '';
+    while (DateTime.now().isBefore(until)) {
+      final r = await hotspotConnector.currentSsid();
+      now = r.ssid;
+      if (r.linked && r.ssid == ssid) {
+        // DHCP 重新拿地址要一点时间，早一秒拨号就多一次假失败
+        await Future.delayed(const Duration(milliseconds: 1500));
+        debugPrint('[Xyrix][WiFi] 手机已回到 $ssid，从 offset=$_resumeOffset 续传');
+        return;
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    throw HardwareException(
+      HardwareErrorCode.connectionLost,
+      '断链后 ${seconds}s 内手机没回到设备热点（当前 "$now"），'
+      '续传中止（已收 $_received/$_total，偏移已落盘）',
+    );
+  }
+
+  /// 4 步：建 TCP 链，**判定标准是「谁真的推了字节」，不是「谁接受了 connect」**。
+  ///
+  /// 这条判据是真机踩出来的：手机进了卡的 AP 之后仍能走到家里路由器，
+  /// `192.168.1.1:80` 三次握手成功却一个字节都不推。旧实现「取第一个连上的
+  /// socket」会把路由器端口当成卡的服务器，然后 15 秒空等，得出
+  /// 「设备不推流」的假结论。所以候选端点并发拨号、并发听，
+  /// 只有先推出字节的才留下，其余一律关掉，并把每个端点的下场记进日志。
+  ///
+  /// [trigger] 非空时在「连接已建好」这一刻发 0x46，用来覆盖
+  /// 「先连接、后触发」这种时序；两种时序共用同一套按字节定胜负的选路逻辑，
+  /// 不会出现「连上了错端点，只好瞎猜」的情况。
+  Future<_TcpProbe> _dial({Future<void> Function()? trigger}) async {
     final hosts = await _candidateHosts();
-    final ports = <int>[
-      if (_creds?.port != null) _creds!.port!,
-      ..._candidatePorts,
-    ];
+    final ports = _candidatePortList();
     final combos = <(String, int)>[
       for (final host in hosts)
         for (final port in ports) (host, port),
     ];
-    debugPrint(
-      '[Xyrix][WiFi] TCP 探测: '
-      '${combos.map((c) => '${c.$1}:${c.$2}').join(', ')}',
-    );
+    debugPrint('[Xyrix][WiFi] TCP 候选 ${combos.length} 个: '
+        '${combos.map((c) => '${c.$1}:${c.$2}').join(', ')}');
 
-    final results = await Future.wait(
-      combos.map(((String, int) c) async {
-        try {
-          return await Socket.connect(
-            c.$1,
-            c.$2,
-            timeout: const Duration(seconds: 3),
-          );
-        } catch (e) {
-          debugPrint('[Xyrix][WiFi] ${c.$1}:${c.$2} 连接失败: $e');
-          return null;
-        }
-      }),
-    );
-
-    Socket? picked;
-    for (final s in results) {
-      if (s == null) continue;
-      if (picked == null) {
-        picked = s;
-      } else {
-        s.destroy(); // 探测产生的多余连接一律关掉
+    final probes = <_TcpProbe>[];
+    await Future.wait(combos.map((c) async {
+      final p = _TcpProbe(c.$1, c.$2);
+      probes.add(p);
+      Socket s;
+      try {
+        s = await Socket.connect(
+          c.$1,
+          c.$2,
+          timeout: const Duration(seconds: 4),
+        );
+      } catch (e) {
+        p.note = '连不上 ${e.toString().split('\n').first.trim()}';
+        return;
       }
-    }
-    if (picked == null) {
+      p.socket = s;
+      p.note = '已连接，无数据';
+      p.attach();
+    }));
+
+    final connected = probes.where((p) => p.socket != null).toList();
+    if (connected.isEmpty) {
+      for (final p in probes) {
+        p.cancel();
+      }
       throw HardwareException(
         HardwareErrorCode.connectionLost,
-        '无法通过热点连接设备（TCP 探测失败），请确认手机已连上设备热点',
+        'TCP 候选端点全部连不上（${probes.length} 个），'
+        '请确认手机已连上设备热点且拿到了同网段地址',
       );
     }
-    return picked;
+
+    // 连接就绪后才触发，随后统一在同一个窗口里看谁先推字节
+    if (trigger != null) await trigger();
+    final until = DateTime.now().add(_firstByteGrace);
+    while (DateTime.now().isBefore(until)) {
+      if (probes.any((p) => p.bytes > 0)) break;
+      // 连上的端点全提前收尾了，就没必要把窗口等满
+      if (connected.every((p) => p.earlyDone || p.earlyError != null)) break;
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    _TcpProbe? winner;
+    for (final p in probes) {
+      if (p.bytes > 0) {
+        winner = p;
+        break;
+      }
+    }
+    for (final p in probes) {
+      if (!identical(p, winner)) p.cancel();
+    }
+    debugPrint(
+      '[Xyrix][WiFi] TCP 下场: '
+      '${probes.map((p) => '${p.host}:${p.port}=${p.note}').join(' | ')}',
+    );
+    if (winner == null) {
+      throw HardwareException(
+        HardwareErrorCode.connectionLost,
+        '已发 0x46，但 ${probes.length} 个候选端点没有推出任何字节'
+        '（连上的 ${connected.length} 个）——要么 IP/端口不对'
+        '（计划文件补 `host=ip:port` 收窄），要么设备不认这条触发',
+      );
+    }
+    winner.note = '先推 ${winner.bytes} B';
+    return winner;
   }
 
-  /// TCP 候选地址：凭证帧给的 IP 优先，其次按本机热点网段推断网关（.1），
-  /// 最后补设备厂商常见默认段
+  /// 端口列表：明确指定了就只拨它，没指定才扫常见端口
+  List<int> _candidatePortList() {
+    final p = _creds?.port;
+    if (Config.wifiTcpTarget.isNotEmpty) {
+      if (p != null) return [p];
+      // 收窄到单个 IP 后扫描是安全的（不会再打到别的主机），保留常见端口试探
+      return _candidatePorts;
+    }
+    return [if (p != null) p, ..._candidatePorts];
+  }
+
+  /// TCP 候选地址。计划文件 `host=` 给了就**只拨这一个**——收窄的意义正在于
+  /// 此：不收窄就无法排除家里路由器那个「握手成功但零字节」的假端点。
+  /// 没给才按凭证帧 IP → 本机网段网关（.1）→ 厂商常见默认段推。
   Future<List<String>> _candidateHosts() async {
+    final explicit = Config.wifiTcpTarget.split(':').first.trim();
+    if (explicit.isNotEmpty) return [explicit];
     final hosts = <String>[if (_creds?.ip != null) _creds!.ip!];
     try {
       final interfaces = await NetworkInterface.list(
@@ -339,6 +589,14 @@ class XyrixWifiTransferSession {
           }
         }
       }
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          final parts = addr.address.split('.');
+          if (parts.length == 4 && !addr.isLoopback && !hosts.contains(addr.address)) {
+            hosts.add(addr.address);
+          }
+        }
+      }
     } catch (_) {}
     for (final fallback in const [
       '192.168.1.80',
@@ -350,66 +608,93 @@ class XyrixWifiTransferSession {
     return hosts;
   }
 
-  Future<void> _receive(Socket socket) async {
+  /// 5 步：把选中端点的数据流落盘并判定完整性。
+  ///
+  /// 监听在 [_dial] 里就已经挂上（探测期缓冲），这里只做「装回调 + 补缓冲」，
+  /// 两步在同一个同步块里完成——Dart 单线程事件循环保证两者之间不会插入新数据，
+  /// 所以每个字节恰好进 [handler] 一次：既不会漏，也不会重。
+  Future<void> _receive(_TcpProbe probe) async {
     final done = Completer<void>();
-    late final StreamSubscription<Uint8List> sub;
-    sub = socket.listen(
-      (data) {
-        _stallTimer?.cancel();
-        _sink?.add(data);
-        _newBytes += data.length;
-        _stallTimer = Timer(const Duration(seconds: 15), () {
-          if (!done.isCompleted) {
-            done.completeError(TimeoutException('TCP 数据断流 15 秒'));
-          }
-        });
-        if (!_finished) {
-          _emitProgress(TransferState.transferring);
-        }
-        if (_total > 0 && _received > _total && !done.isCompleted) {
-          // 过收 = 有非文件字节混进了 TCP 流，内容不可信
-          done.completeError(
-            HardwareException(
-              HardwareErrorCode.integrityMismatch,
-              '收到字节超出文件大小（$_received/$_total），数据流被污染',
-            ),
-          );
-          return;
-        }
-        if (_total > 0 && _received >= _total && !done.isCompleted) {
-          done.complete();
-        }
-      },
-      onError: (Object e) {
-        if (!done.isCompleted) done.completeError(e);
-      },
-      onDone: () {
-        if (!done.isCompleted) {
-          if (_total > 0 && _received >= _total) {
-            done.complete();
-          } else {
-            done.completeError(
-              HardwareException(
-                HardwareErrorCode.transferInterrupted,
-                '设备提前断开连接（已收 $_received/$_total 字节）',
-              ),
-            );
-          }
-        }
-      },
-      cancelOnError: true,
-    );
-    _stallTimer = Timer(const Duration(seconds: 15), () {
-      if (!done.isCompleted) {
-        done.completeError(TimeoutException('TCP 数据断流 15 秒'));
+    final splitter = XyrixWifiStreamSplitter();
+
+    void settle(Object? error) {
+      if (done.isCompleted) return;
+      if (error == null) {
+        done.complete();
+      } else {
+        done.completeError(error);
       }
-    });
+    }
+
+    void handler(Uint8List data) {
+      _stallTimer?.cancel();
+      // 收尾标记不算文件字节：设备推完最后一块会原样追加 sendfile finish!
+      final fileBytes = splitter.feed(data);
+      if (fileBytes.isNotEmpty) {
+        _sink?.add(fileBytes);
+        _newBytes += fileBytes.length;
+      }
+      _stallTimer = Timer(_stallTimeout, () {
+        settle(TimeoutException('TCP 数据断流 ${_stallTimeout.inSeconds} 秒'));
+      });
+      if (!_finished) _emitProgress(TransferState.transferring);
+      if (splitter.finished) {
+        debugPrint('[Xyrix][WiFi] 收到 sendfile finish! 收尾标记，收流');
+        settle(null);
+        return;
+      }
+      if (_total > 0 && _received > _total) {
+        // 没有标记却超出文件大小 = 真有别的字节混进来了，内容不可信
+        settle(
+          HardwareException(
+            HardwareErrorCode.integrityMismatch,
+            '收到字节超出文件大小（$_received/$_total）且未见收尾标记，数据流被污染',
+          ),
+        );
+        return;
+      }
+      if (_total > 0 && _received >= _total) settle(null);
+    }
+
+    probe.onData = handler;
+    probe.onEnd = (error) {
+      if (error != null) {
+        settle(error);
+        return;
+      }
+      if (_total <= 0 || _received >= _total) {
+        settle(null);
+      } else {
+        settle(
+          HardwareException(
+            HardwareErrorCode.transferInterrupted,
+            '设备提前断开连接（已收 $_received/$_total 字节）',
+          ),
+        );
+      }
+    };
+    final pending = probe.takePending();
+    if (pending.isNotEmpty) handler(pending);
+    // 探测期间就可能已经收尾（推完就关连接），这些状态要在这里结算，不能丢
+    if (probe.earlyError != null) {
+      settle(probe.earlyError);
+    } else if (probe.earlyDone) {
+      probe.onEnd!(null);
+    }
+    if (!done.isCompleted && _total > 0 && _received >= _total) settle(null);
+    if (!done.isCompleted) {
+      _stallTimer?.cancel();
+      _stallTimer = Timer(_stallTimeout, () {
+        settle(TimeoutException('TCP 无数据（首字节等 ${_stallTimeout.inSeconds} 秒）'));
+      });
+    }
     try {
       await done.future;
     } finally {
       _stallTimer?.cancel();
-      await sub.cancel();
-      socket.destroy();
+      probe.cancel();
+      _probe = null;
+      _socket = null;
     }
   }
 
@@ -433,11 +718,14 @@ class XyrixWifiTransferSession {
       _lastIntegrity = outcome.integrity;
     }
     if (error != null) {
-      verdict = '失败 state=$state received=$_received/$_total：$error';
+      verdict =
+          '失败 state=$state received=$_received/$_total '
+          '[${_ordersTried.join(' / ')}]：$error';
       debugPrint('[Xyrix][WiFi] 快传失败 received=$_received/$_total: $error');
     } else {
       verdict =
           'state=$state received=$_received/$_total '
+          '[${_ordersTried.isEmpty ? "首轮即成功" : _ordersTried.join(' / ')}] '
           'integrity=${outcome?.integrity ?? _lastIntegrity} → ${outcome?.filePath}';
       debugPrint(
         '[Xyrix][WiFi] 快传结束 state=$state intent=$stopIntent '
@@ -490,6 +778,9 @@ class XyrixWifiTransferSession {
   /// BLE 可能已断（快传不依赖蓝牙保活），所有命令失败都吞掉。
   Future<void> _teardown() async {
     _linkPhase(WifiTransferStatus.stopping);
+    _stallTimer?.cancel();
+    _probe?.cancel();
+    _probe = null;
     try {
       await sendCommand(XyrixCommands.wifiTransferStop);
     } catch (_) {}
@@ -558,5 +849,147 @@ class XyrixWifiTransferSession {
       ),
     );
     await _teardown();
+  }
+}
+
+/// 把设备推来的 TCP 流切成「文件字节」与「收尾标记」两段。
+///
+/// 2026-10-21 真机定案（`2026-10-19-22-10-43.wav`，设备报 77,952 B）：
+/// 设备经 `192.168.1.80:5000` 推来的流 = **文件原始字节**（与蓝牙下载到的
+/// 同一文件逐字节相同，SHA-256 `e1ab7a99…b135a1` 一致），
+/// 末尾再原样追加 20 字节 ASCII 收尾标记 `sendfile finish!` + 4 个 NUL。
+///
+/// 这既不是帧头也不是分块长度，就是 sendfile 循环跑完的标志。此前把它算进
+/// 文件字节，于是 `_received > sizeBytes` 判成「数据流被污染」，一次**已经
+/// 成功**的快传被自己判死；断点越界时设备只回这 20 字节，又被当成新一轮的
+/// 过收。所以按标记收流：看到它就结算，标记之后的字节一律不写盘。
+class XyrixWifiStreamSplitter {
+  /// 设备原样追加的收尾标记（16 字符 + 4 字节 NUL 填充 = 20 B）
+  static const List<int> trailer = <int>[
+    0x73, 0x65, 0x6e, 0x64, 0x66, 0x69, 0x6c, 0x65, // sendfile
+    0x20, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x21, // ' finish!'
+    0x00, 0x00, 0x00, 0x00,
+  ];
+
+  final List<int> _tail = <int>[];
+  bool _finished = false;
+
+  /// 收到过标记 = 设备说这个文件推完了
+  bool get finished => _finished;
+
+  /// 喂入一段流字节，返回其中**属于文件**、应当写盘的部分。
+  ///
+  /// 标记可能被 TCP 切成任意两段，所以始终留 `trailer.length - 1` 字节的尾巴
+  /// 不参与写盘，等下一段再判——留到下一轮的字节要么是标记的前缀，
+  /// 要么下一轮就被吐出来，不会丢也不会重。
+  Uint8List feed(List<int> data) {
+    if (_finished) return Uint8List(0);
+    final buf = BytesBuilder(copy: false)
+      ..add(_tail)
+      ..add(data);
+    final all = buf.takeBytes();
+    final idx = _indexOf(all, trailer);
+    if (idx >= 0) {
+      _finished = true;
+      _tail.clear();
+      return Uint8List.sublistView(all, 0, idx);
+    }
+    final keep = trailer.length - 1;
+    if (all.length <= keep) {
+      _tail
+        ..clear()
+        ..addAll(all);
+      return Uint8List(0);
+    }
+    _tail
+      ..clear()
+      ..addAll(Uint8List.sublistView(all, all.length - keep));
+    return Uint8List.sublistView(all, 0, all.length - keep);
+  }
+
+  static int _indexOf(List<int> haystack, List<int> needle) {
+    outer:
+    for (var i = 0; i + needle.length <= haystack.length; i++) {
+      for (var j = 0; j < needle.length; j++) {
+        if (haystack[i + j] != needle[j]) continue outer;
+      }
+      return i;
+    }
+    return -1;
+  }
+}
+
+/// 一个 TCP 候选端点的探测状态。
+///
+/// 存在的理由是「建链」和「收流」之间不能有空档：候选端点并发拨号时，
+/// 真正推流的那个可能在我们选定赢家之前就把前几百字节推完，若此时还没挂
+/// 监听，这些字节就丢了——快传要的是逐字节可比对的文件，丢头就等于白传。
+/// 所以监听在 connect 成功那一刻就挂上（[attach]），没装业务回调之前
+/// 一律先进 [_pending] 缓冲，[_receive] 装好回调后再一次性取出补交。
+class _TcpProbe {
+  _TcpProbe(this.host, this.port);
+
+  final String host;
+  final int port;
+  Socket? socket;
+  StreamSubscription<Uint8List>? _sub;
+  final BytesBuilder _pending = BytesBuilder(copy: false);
+
+  /// 累计收到的字节数（含缓冲里的），选赢家与写结论都看它
+  int bytes = 0;
+
+  /// 一行下场，用于「N 个端点各自怎么样了」这种定位
+  String note = '未连接';
+
+  void Function(Uint8List data)? onData;
+  void Function(Object? error)? onEnd;
+
+  /// 流在探测窗口内就结束了：两者都要留给 [_receive] 结算，不能当没发生
+  bool earlyDone = false;
+  Object? earlyError;
+
+  /// 挂监听。回调在 onData 装上之前只缓冲，装上之后直通。
+  /// Dart 单线程，bytes 自增与两种投递路径互斥，字节不会重复计数。
+  void attach() {
+    final s = socket;
+    if (s == null) return;
+    _sub = s.listen(
+      (data) {
+        bytes += data.length;
+        if (onData != null) {
+          onData!(data);
+        } else {
+          _pending.add(data);
+        }
+      },
+      onError: (Object e) {
+        note = '读失败 ${e.toString().split('\n').first.trim()}';
+        earlyError = e;
+        if (onEnd != null) onEnd!(e);
+      },
+      onDone: () {
+        earlyDone = true;
+        if (onEnd != null) onEnd!(null);
+      },
+      cancelOnError: true,
+    );
+  }
+
+  /// 取走探测期缓冲的字节（调用方随即装上 onData，两步之间不会有新数据）
+  Uint8List takePending() => _pending.takeBytes();
+
+  void cancel() {
+    onData = null;
+    onEnd = null;
+    final s = socket;
+    socket = null;
+    final sub = _sub;
+    _sub = null;
+    try {
+      sub?.cancel();
+    } catch (_) {}
+    try {
+      s?.destroy();
+    } catch (_) {}
   }
 }
