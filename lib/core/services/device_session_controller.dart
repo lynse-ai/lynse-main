@@ -11,7 +11,6 @@ import 'dart:io';
 
 import 'package:dting/config/config.dart';
 import 'package:dting/core/hardware/hardware_kit.dart';
-import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
@@ -211,11 +210,8 @@ class DeviceSessionController extends GetxController {
       {String? label}) {
     if (needed == _transferGuardActive) return;
     _transferGuardActive = needed;
-    if (needed) {
-      NvEasyPlugin().startTransferGuard(label: label ?? _transferLabel(progress));
-    } else {
-      NvEasyPlugin().stopTransferGuard();
-    }
+    // TODO(快传): NvEasyPlugin 的 start/stopTransferGuard 原生通道尚未合入，
+    // 暂以空实现占位（防止传输中系统挂起 BLE 的保活逻辑待原生侧补齐）
   }
 
   static String _transferLabel(TransferProgress? p) {
@@ -334,12 +330,6 @@ class DeviceSessionController extends GetxController {
       '自动重连失败',
       '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
       isError: true,
-    );
-    }
-    Get.snackbar(
-      '自动重连失败',
-      '请确认 ${device.name} 已开机、有电并靠近手机，再手动扫描连接',
-      snackPosition: SnackPosition.TOP,
     );
   }
 
