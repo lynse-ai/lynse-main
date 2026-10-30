@@ -1,0 +1,13 @@
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Gradle wrapper 启动器与 jar 需要入库，否则 clone 出来的工程无法启动 Gradle。
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks
