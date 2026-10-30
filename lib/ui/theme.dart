@@ -35,7 +35,10 @@ abstract final class AssistantTheme {
         titleMedium: LType.heading,
       ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: LColors.canvas,
+        // 透明底 + flexibleSpace 上的 LGlassAppBarLayer 才能真正模糊滚过的正文；
+        // 给 AppBar 设半透背景色只会叠一层颜色，不参与模糊
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         foregroundColor: LColors.text,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -43,9 +46,11 @@ abstract final class AssistantTheme {
         titleTextStyle: LType.title,
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: LColors.card,
+        // 背景交给外层 LGlass 浮面统一处理，这里必须透明否则挡住模糊结果
+        backgroundColor: Colors.transparent,
         indicatorColor: LColors.blue,
         surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
         elevation: 0,
         height: 64,
         labelTextStyle: WidgetStatePropertyAll(

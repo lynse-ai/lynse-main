@@ -82,14 +82,28 @@ class BleManager(
 
 
     init {
-        // 初始化蓝牙管理器
-        nvEasyBleManager.init(application)
-        //初始化文件存储
+        // 初始化蓝牙管理器。
+        // ⚠️ v1.2.0 起 init 必须带 appKey（厂商用它做 *APP#appkey# 鉴权，
+        // 缺 key 时新固件对任何 *APP# 命令都保持沉默）。
         MMKVUtils.initialize(application)
-        // 获取断点续传信息
-        getResumeDataOffset()
+        val appKey = MMKVUtils.getInstance().getString("neview_appkey", "") ?: ""
+        nvEasyBleManager.init(application, appKey)
+        //初始化文件存储
+        // 断点续传信息在连接成功、拿到设备 MAC 之后才读取（见 onConnectSuccess）
         LogUtils.getInstance().initialize(application)
-        Log.d("DTingChannel", "BleManager init")
+        Log.d("DTingChannel", "BleManager init appKey=${if (appKey.isEmpty()) "空" else "len" + appKey.length}")
+    }
+
+    /**
+     * 上层在连接时才拿到 AppKey（设置页存的值），所以这里补一次带 key 的 init。
+     * v1.2.0 的 `init(Application, String)` 是幂等的：重复调用只是换 key，
+     * 不会重开射频；但**没带对 key 时设备对任何 `*APP#` 命令都沉默**，
+     * 所以这一步不能省。
+     */
+    fun applyAppKey(application: Application, appKey: String) {
+        if (appKey.isBlank()) return
+        nvEasyBleManager.init(application, appKey)
+        Log.d("DTingChannel", "BleManager applyAppKey len=${appKey.length}")
     }
 
     /**
@@ -141,6 +155,57 @@ class BleManager(
     fun startRecord() {
         handleStartRecord()
     }
+
+    /**
+     * 暂停 / 恢复录音。
+     *
+     * 真机验证（2026-10-23，`Lynse AI 0091` proto 24）：
+     * `record(dev, 2, mode)` → `onRecordExtended status=2`，
+     * `record(dev, 3, mode)` → `status=3`，两者都有回包。
+     * 这两位依赖能力位 `ABILITY_RECORD_PAUSE_RESUME(17)`，本卡在位。
+     * 之前这两个方法在插件里只回了一个字符串、根本没碰 AAR（等于对外撒谎）。
+     */
+    fun pauseRecord() {
+        handlePauseOrResume(2)
+    }
+
+    fun resumeRecord() {
+        handlePauseOrResume(3)
+    }
+
+    /**
+     * 打点。真机验证：`recordMark` → `onRecordMark status=0 sn=… index=1 offset=4110 source=1`。
+     * 依赖 `ABILITY_RECORD_MARK(18)`。
+     */
+    fun addMark() {
+        val device = currentDevice ?: return
+        nvEasyBleManager.recordMark(device)
+        Log.d("DTingChannel", "BleManager addMark 已下发 recordMark")
+    }
+
+    /**
+     * 取消当前下载。厂商口径：`stopDownloadFiles` 只停传输，**不会**关 WiFi，
+     * 所以快传取消后还要按 `switchWifi(false)` 的固定顺序收尾。
+     */
+    fun cancelDownload() {
+        val device = currentDevice ?: return
+        nvEasyBleManager.stopDownloadFiles(device)
+        downloadFileOfWifiRunning = false
+        Log.d("DTingChannel", "BleManager cancelDownload 已下发 stopDownloadFiles")
+    }
+
+    /**
+     * 删除设备上的一个文件。通道已接通，但**没在真机上验过**（不可逆，扫档默认不开闸），
+     * 所以对外能力声明仍然不给（见 Dart 侧 `HardwareCapability.deleteFile` 的注释）。
+     */
+    fun deleteFile(sn: Int, name: String?) {
+        val device = currentDevice ?: return
+        nvEasyBleManager.deleteRecordFile(device, sn, name ?: "")
+        Log.d("DTingChannel", "BleManager deleteFile sn=$sn name=$name")
+    }
+
+    /** 快传中标志：取消下载时要连着 WiFi 收尾一起管 */
+    var downloadFileOfWifiRunning: Boolean = false
 
 
     /**
@@ -315,6 +380,10 @@ class BleManager(
         ) {
             currentDevice = bleDevice
             mBpResumeDeviceMac = bleDevice.mac
+            // 断点信息按 MAC 分键存于 MMKV，只有连接成功拿到 MAC 才读得出来。
+            // init 里也调过一次，那时 mBpResumeDeviceMac 还是 null，等于没读——
+            // 进程重启后的续传必须在这里重载，否则上次收到的字节白传。
+            getResumeDataOffset()
             nvEasyBleManager.setFilesCallback(bleDevice, mFilesCallback)
             eventHandler.sendDeviceConnected(bleDevice.mac, bleDevice.name)
         }

@@ -4,9 +4,13 @@
 /// 已随旧 UI 删除；硬件层在 shell binding 中按需初始化。
 library;
 
+import 'dart:async';
+import 'dart:io';
+
+import 'package:dting/config/config.dart';
+import 'package:dting/core/hardware/newview/newview_probe_runner.dart';
 import 'package:dting/core/services/device_session_controller.dart';
 import 'package:dting/intl/messages_all.dart';
-import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/router/router.dart';
 import 'package:dting/ui/theme.dart';
 import 'package:dting/utils/local_database.dart';
@@ -22,9 +26,8 @@ void main() async {
   if (!await LocalDataBase().init()) return;
   if (!await SqlDBHelper().initDb()) return;
 
-  // 原生插件（Neview 通道）+ 硬件抽象层（双厂商适配器）
-  NvEasyPlugin.init();
-  DeviceSessionController.init().bootstrap();
+  // 硬件层：默认走统一 LYNSE Hardware SDK；旧双适配器可用 --dart-define 回退。
+  await DeviceSessionController.init().bootstrap();
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -41,6 +44,14 @@ void main() async {
   );
 
   runApp(const MyApp());
+
+  // Newview 裸协议探测台（联调用，不依赖厂商 AAR）。
+  // 只有手机上存在 files/newview_probe.txt、或编译期带了 NEWVIEW_PROBE=1..4
+  // 才会真的动；否则 maybeStart 读完计划立刻返回。
+  // 延时是让首屏的定位/蓝牙授权弹窗先过掉，不然扫描会以权限失败收场。
+  if (Platform.isAndroid && !Config.useSdkHardware) {
+    Timer(const Duration(seconds: 8), NewviewProbeRunner.maybeStart);
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -49,7 +60,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'Lynse',
+      title: '灵斯记',
       initialRoute: AppRouter.initialRoute,
       getPages: AppRouter.pages,
       localizationsDelegates: const [

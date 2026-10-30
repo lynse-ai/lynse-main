@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="谛听记"
+        android:label="灵斯记"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -34,6 +34,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 录音卡文件传输保活：BLE/TCP 传输与固件升级期间由原生通道起停 -->
+        <service
+            android:name=".TransferForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|dataSync" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
@@ -58,6 +63,20 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <!-- Xyrix 音频外传快传：App 需要把手机加入设备自开的热点（WifiNetworkSuggestion） -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Newview 快传：厂商 AAR 自己的 manifest 里有这条，我们原来没有，补上以对齐
+         依赖声明（Android 13+ 上是读 SSID / 发起入网的前提）。
+         ⚠️ 但它**不是**本次 Mate 40 Pro（Android 12 / API 31）快传卡在 CONNECTING 的原因：
+         这台机器上这条权限根本不存在（pm grant 报 Unknown permission），
+         而 ACCESS_FINE_LOCATION 已经是 granted=true。API 31 上的真实限制是
+         「普通 App 不能用 WifiConfiguration/addNetwork 主动入网」——那正是厂商
+         提供 autoConnect=false + onWifiOpened 让 App 自己连的原因。 -->
+    <!-- ⚠️ 不能加 usesPermissionFlags="neverForLocation"：加了系统会隐去
+         SSID/BSSID（WifiInfo.getSSID() 恒为 <unknown ssid>），「手机在不在卡的热点上」
+         就永远判断不了——真机 2026-10-25 踩过：TCP 连到了同网段里另一个
+         192.168.1.80:5000 的设备。我们确实要用热点名识别设备，所以不带这个标记。 -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/> 
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- 蓝牙基本权限 -->
@@ -77,4 +96,10 @@
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <!-- 针对微信应用上架调整 -->
     <uses-permission android:name="android.permission.READ_CLIPBOARD_IN_BACKGROUND" />
+    <!-- 传输保活：录音卡文件同步动辄几十分钟，退后台不能被回收 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

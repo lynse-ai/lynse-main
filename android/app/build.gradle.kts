@@ -65,7 +65,15 @@ android {
             // 禁用 Deferred Components
         }
         debug {
-            signingConfig = signingConfigs.getByName("development")
+            // key.properties 是各开发机本地文件（被 android/.gitignore 忽略），
+            // 缺它时 development.storeFile 为 null，要到 :app:packageDebug
+            // 才炸。调试包没有必须使用自有密钥的理由——缺失就回退默认调试签。
+            val development = signingConfigs.findByName("development")
+            signingConfig = if (development?.storeFile != null) {
+                development
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
@@ -75,9 +83,16 @@ flutter {
 }
 
 dependencies {
-//    implementation(files("libs/NvEasyBle-v1.0.8_0507.aar"))
-    implementation(files("libs/NvEasyBle-v1.1.3.aar"))
-    implementation(files("libs/NvEasyAudio-v1.0.2.aar"))
+//    implementation(files("libs/NvEasyBle-v1.0.8_0507.aar"))    // v1.2.0：v1.1.3 的 init 根本没有 appKey 形参，类里也不含 "*APP#appkey#"
+    // 字符串——它没法给需要鉴权的新固件握手，所以必须跟厂商 Demo 同版本。
+    //
+    // ⚠️ _minSdk36 这份是厂商 v1.2.0 的**元数据改写版**：原包
+    // aar-metadata.properties 写 minCompileSdk=37，而本机只有 android-36、
+    // AGP 8.13.2 也只支持到 36，直接依赖会被 checkDebugAarMetadata 拦掉。
+    // 改写只动了那一行（classes.jar 逐字节相同、jni 齐全），不含任何 API 差异。
+    // 它只是联调用的临时物：装机验证完就要换回厂商原包（或升到 compileSdk 37）。
+    implementation(files("libs/NvEasyBle-v1.2.0_minSdk36.aar"))
+    implementation(files("libs/NvEasyAudio-v1.0.3.aar"))
 //    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.0")
     
     // MMKV - 腾讯高性能键值存储库
@@ -89,4 +104,8 @@ dependencies {
     // Kotlin协程库 - 支持异步日志处理
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+
+    // LYNSE Hardware SDK：桥接 + 厂商 catalog（MainActivity 手工组装）
+    implementation(project(":lynse-hardware-bridge"))
+    implementation(project(":lynse-vendor-catalog"))
 }

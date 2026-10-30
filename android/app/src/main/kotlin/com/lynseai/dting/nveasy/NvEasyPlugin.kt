@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.util.Log
+import com.lynseai.dting.TransferForegroundService
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.EventChannel.StreamHandler
@@ -33,8 +34,12 @@ class NvEasyPlugin(private val application: Application, context1: Activity) : F
     // 音频工具类，处理音频相关功能
     private lateinit var audioUtils: AudioUtils
 
-    // 蓝牙管理器，处理蓝牙相关功能
-    private lateinit var bleManager: BleManager
+    // 蓝牙管理器，处理蓝牙相关功能。
+    // SDK 路径下只保留插件注册以复用前台保活；厂商 BleManager 必须惰性构造，
+    // 否则它会在 onAttachedToEngine 时就初始化厂商 BLE，跟统一 SDK 抢同一个适配器。
+    private val bleManager: BleManager by lazy {
+        BleManager(application, eventHandler, audioUtils)
+    }
 
     // 应用上下文
     private lateinit var context: Context
@@ -58,7 +63,6 @@ class NvEasyPlugin(private val application: Application, context1: Activity) : F
         // 初始化工具类
         eventHandler = EventHandler(methodChannel)
         audioUtils = AudioUtils(flutterPluginBinding.applicationContext)
-        bleManager = BleManager(application, eventHandler, audioUtils)
     }
 
     /**
@@ -98,6 +102,12 @@ class NvEasyPlugin(private val application: Application, context1: Activity) : F
                     result.error("invalid_argument", "UUID is required", null)
                     return
                 }
+                // 厂商 v1.2.0 起 init 必须带 appKey，鉴权不过设备对任何命令都沉默。
+                // AppKey 由上层在连接时给（设置页存的 neview_appKey），这里补一次 init。
+                val appKey = call.argument<String>("appKey")
+                if (!appKey.isNullOrBlank()) {
+                    bleManager.applyAppKey(application, appKey)
+                }
                 val success = bleManager.connect(uuid)
                 if (success) {
                     result.success("startConnect!")
@@ -124,13 +134,35 @@ class NvEasyPlugin(private val application: Application, context1: Activity) : F
                 bleManager.startRecord()
                 result.success("startRecord!")
             }
-            // 暂停录音
+            // 暂停录音：真机验证 record(dev,2,mode) → onRecordExtended status=2
             "pauseRecord" -> {
+                bleManager.pauseRecord()
                 result.success("pauseRecord!")
             }
-            // 恢复录音
+            // 恢复录音：真机验证 record(dev,3,mode) → onRecordExtended status=3
             "resumeRecord" -> {
+                bleManager.resumeRecord()
                 result.success("resumeRecord!")
+            }
+            // 打点：真机验证 recordMark → onRecordMark status=0 + index/offset
+            "addMark" -> {
+                bleManager.addMark()
+                result.success("addMark!")
+            }
+            // 取消下载：stopDownloadFiles（厂商口径——它不会顺手关 WiFi）
+            "cancelDownload" -> {
+                bleManager.cancelDownload()
+                result.success("cancelDownload!")
+            }
+            // 删除设备文件：通道已接通，但**未真机验证**（不可逆），上层能力声明仍不给
+            "deleteFile" -> {
+                val sn = call.argument<Int>("sn")
+                if (sn == null) {
+                    result.error("invalid_argument", "File SN is required", null)
+                    return
+                }
+                bleManager.deleteFile(sn, call.argument<String>("name"))
+                result.success("deleteFile!")
             }
             // 停止录音
             "stopRecord" -> {
@@ -248,6 +280,45 @@ class NvEasyPlugin(private val application: Application, context1: Activity) : F
                 } catch (e: Exception) {
                     result.error("minimize_failed", "Failed to minimize app: ${e.message}", null)
                 }
+            }
+            // 传输保活：起前台服务（文件下载/快传/固件升级开始时调）
+            "startTransferGuard" -> {
+                val label = call.argument<String>("label") ?: "正在与录音卡同步文件"
+                TransferForegroundService.start(context, label)
+                result.success(true)
+            }
+            // 传输保活：收前台服务（传输结束/失败/取消时必须调）
+            "stopTransferGuard" -> {
+                TransferForegroundService.stop(context)
+                result.success(true)
+            }
+
+            // ── 厂商 AAR 接口扫档（NewviewVendorProbe）──────────────────
+            // 参考实现裁判：所有 *APP# 命令都由厂商 SDK 发出，含它自带的
+            // appkey/sdkkey 握手。用来判定「卡的某接口到底活没活」，
+            // 而不是判定「我们的裸协议对不对」。
+            "vendorProbeStart" -> {
+                val name = call.argument<String>("name")
+                val appKey = call.argument<String>("appKey")
+                val rec = call.argument<Boolean>("record") ?: true
+                val wifi = call.argument<Boolean>("wifi") ?: false
+                val del = call.argument<Boolean>("delete") ?: false
+                val mac = call.argument<String>("mac")
+                val advHex = call.argument<String>("advHex")
+                result.success(
+                    NewviewVendorProbe.start(
+                        application, name, appKey, rec, wifi, del, mac, advHex
+                    )
+                )
+            }
+            "vendorProbeRunning" -> result.success(NewviewVendorProbe.isRunning)
+            "vendorProbeTail" -> {
+                val n = call.argument<Int>("lines") ?: 400
+                result.success(NewviewVendorProbe.tail(n))
+            }
+            "vendorProbeStop" -> {
+                NewviewVendorProbe.stop()
+                result.success(true)
             }
 
             else -> {

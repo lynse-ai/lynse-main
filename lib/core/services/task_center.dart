@@ -46,6 +46,7 @@ class TaskEntry {
     TaskStatus? status,
     int? progress,
     String? title,
+    String? refId,
     String? error,
     DateTime? updatedAt,
   }) =>
@@ -55,8 +56,10 @@ class TaskEntry {
         status: status ?? this.status,
         progress: progress ?? this.progress,
         title: title ?? this.title,
-        refId: refId,
-        error: error,
+        // 不传即沿用原值：否则每次推进进度都会把 refId/error 抹掉，
+        // 任务从历史跳回来源记录的能力随之失效
+        refId: refId ?? this.refId,
+        error: error ?? this.error,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
@@ -97,6 +100,7 @@ class TaskCenter extends GetxController {
 
   /// shell 启动时调用
   void bootstrap() {
+    _recoverOrphans();
     _loadHistory();
     final session = DeviceSessionController.instance;
     // 传输进度 → 下载任务
@@ -283,6 +287,34 @@ class TaskCenter extends GetxController {
   // ------------------------------------------------------------------
   // 持久化
   // ------------------------------------------------------------------
+
+  /// 用户取消一个进行中任务：落库为 canceled 而非 failed，让「用户明确不要
+  /// 了」和「链路坏了」在任务屏上是两回事（后者才会保留断点）。
+  Future<void> cancel(int id) async {
+    final i = activeTasks.indexWhere((t) => t.id == id);
+    if (i < 0) return;
+    await advance(activeTasks[i], status: TaskStatus.canceled);
+  }
+
+  /// App 重启后 DB 里残留的 queued/running 行已经没有对应链路（GATT 连接和
+  /// TCP socket 都随进程销毁）。就地结算为中断，否则任务屏永远停在「进行中」。
+  Future<void> _recoverOrphans() async {
+    final db = _db;
+    if (db == null) return;
+    try {
+      await db.update(
+        'tasks',
+        {
+          'status': TaskStatus.failed.name,
+          'error': '应用重启导致传输中断，可重新下载（已有断点会自动续传）',
+          'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        },
+        where: "status IN ('queued','running')",
+      );
+    } catch (e) {
+      debugPrint('[TaskCenter] 孤儿任务结算失败: $e');
+    }
+  }
 
   Future<TaskEntry> _persist(TaskEntry task) async {
     final db = _db;

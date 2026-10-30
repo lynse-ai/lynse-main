@@ -1,5 +1,198 @@
 # Changelog
 
+## Unreleased（2026-10-24：命令改成队列发送——一条有应答再发下一条）
+
+- **新增 `CommandLane`**（`lib/core/hardware/command_lane.dart`）：同一时刻只允许一条命令
+  在飞，后来的按 FIFO 排队；一条抛错/超时不会卡死队列；车道自身不设超时（放行下一条的前提
+  是前一条真的结束，否则又会压到卡上），进车道的动作必须自带超时。用 Zone 标记动作内部，
+  嵌套调用在 debug 下当场 assert，避免自锁。
+- 接入两处真正往卡上写命令的地方：
+  - `NeviewAdapter`：`queryDeviceInfo`/`startRecord`/`pauseRecord`/`resumeRecord`/
+    `stopRecord`/`addMark`/`listFiles`/`downloadFile`/`cancelDownload`/`upgradeFirmware`
+    全部走车道；`listFiles` 的槽位覆盖「发出 `getFileList` → 收到 `didReceiveFiles`」整段。
+  - `NewviewRawClient`（探测台裸协议）：`exchangeRaw` 排队，`_waiters` 正常最多一条。
+- **修掉仲裁器的重入漏洞**：`ResourceArbiter.acquire` 原来是 `held != null && held != resource`，
+  同资源重入直接放行——两次并发 `fileTransfer`（下载中再点导入/刷新）会双双通过。
+  现在只要有人持有就拒；`refreshFiles` 遇到占用静默跳过（幂等刷新不该弹错）。
+- **传输期间真正持有锁**：`downloadDeviceFile` 原先拿到 `fileTransfer` 就放，等于没锁；
+  现在持有到这条传输收尾（`transferring` 之后的终态 / `FileImportedEvent` / 错误事件，
+  10 分钟兜底），否则下一次导入会压在同一条流上。
+- 测试：`test/command_lane_test.dart` 5 项（FIFO、并发上限 1、失败不卡队、排队深度、
+  同资源重入必须抛 resourceBusy）；`flutter test` 全套 117 项通过。
+- ⚠️ 只在 Dart 侧验证。SDK 侧本来就有队列（Kotlin `LynseProtocolRuntime` 是 FIFO 队列，
+  Swift 是 slot 互斥、**不保证 FIFO**），这次没改 SDK。
+
+## Unreleased（2026-10-23 第二十轮：蓝牙收尾——第五条只读查询 `authsn`、日志脱敏补漏，以及两处界面文案）
+
+- `*APP#authsn#` 在 PLQ110 / Android 16 上裸发**有回包**，6 段（序列号段按规矩打码）：
+  `*DEV#authsn#***(len=24)#E53CF5D3D190#6825DD87E4A9#LYNSENOTE0719091#`。
+  判据表加 `'authsn': 6`，它因此从 `forbiddenCommands` 移进 `readOnlyCommands`——
+  厂商自己每次连接都调 `queryAuthSN`，这是**读**，不写机器也不下发密钥；
+  风险只在「回包落日志」，见下条。双端（Kotlin `parseAuthSn` + Swift `parseAuthSn`）
+  已移植并有单测；SDK 侧刻意**不发 Diagnostic、不回答 pending 的 `ReadDeviceInfo`**。
+- ⚠️ **热点凭据此前是会进日志的**：`shapeVerdict` 把段列表用 `|` 拼进判据文本，
+  而 `redact` 的正则只认带 `#` 的整帧，分隔符一换就盖不住；`redact` 的名单里也根本没有
+  `wifi`，于是 SSID 与口令跟着判据一起落到探测台日志与 logcat。
+  现在按段位打码（`sensitiveFieldIndexes` / `maskedFields` / `redactHotspotFrame`，
+  两种分隔符都盖、9 段与旧 8 段两种形状都盖），探测台里 `AP=${ssid}` 的三处文案改成只留长度，
+  `_join` 的「已连上 xxx」也不再印名字（它还可能读到用户自己家的 Wi-Fi）。
+  新增两条用例把这件事钉住：判据文本不得含序列号/SSID/口令，且非敏感帧（`cbtname`）照印。
+  `test/newview_protocol_mirror_test.dart` 18 项全过。
+- 蓝牙这一轮的其他结论：`cmicgain` / `epblestat` / `netinfo` / `netstate` / `call` / `serquery`
+  裸发**无回包**；`edr` 那次「有回包」是假的——拆开是 `mem`/`switch`/`cblename` 三条主动上报
+  被合并进同一条 notify（矩阵 11.1 那条规律），按 `edr` 记账就是假账。
+- 两处界面：传输条此前一律渲染成「0 KB / 0 KB · 37%」——百分比是真的，字节是编出来的
+  （Neview 的 `didUpdateDownloadFileProgress` 只给包号，`receivedBytes/totalBytes` 恒为 null）。
+  现在拿不到字节就说「第 x/y 包」，不猜每包多大；只有真给字节的那条通路（Xyrix）才说 KB。
+  程序名统一为**灵斯记**：Android 启动器标签（原「谛听记」）与 `MaterialApp.title`（原 Lynse），
+  iOS 侧 `CFBundleDisplayName` 本来就是灵斯记；bundle id 与工程名不动，免得破坏升级安装。
+
+## Unreleased（2026-10-23 第十九轮：卡片充上电重跑，WiFi 凭据结论翻转，文件面接进 SDK）
+
+- **上一轮「WiFi 拿不到凭据」是错的**（那几轮卡片在掉电）。裸协议 `*APP#wifi#1#` 真机回的是
+  **9 段**：`*DEV#wifi#<开关回显>#<服务器IP>#<端口>#<客户端IP>#<客户端端口>#<SSID>#<密码>#`；
+  关的时候回 `*DEV#switch#0#`。SDK 侧按 8 段硬解会当场抛，不抛也会把端口当 SSID——
+  `newview_protocol.dart` 的段数判据已改 9，`test/newview_protocol_mirror_test.dart`
+  把「真机 9 段 = PASS」和「旧 8 段假设 = MISMATCH」两条都钉住（16 项全过）。
+  **SSID/密码不进仓库、不进日志**，测试向量用打码同形值。
+- 探测台读计划的一个 bug 顺手修掉：`opusfile=1` 这个 token 只有 10 个字符，
+  代码按 `substring(11)` 取尾，直接 `RangeError` 让**整份计划读失败**、探测根本没起跑
+  （本轮第一次尝试就是撞这个；上一轮「0 候选/全沉默」的原因仍是卡片没电，两回事）。
+- 文件面（列表分页 + 逐页 CRC-32 + 下载帧 + 标准 CRC-32）本轮从「厂商二进制里的缺口」
+  变成已取证并移植进 `lynse-hardware-sdk`；细节与判据见
+  `lynse-hardware-sdk/docs/newview-interface-matrix.md` 第 12 节。
+  App 侧生产路径仍走厂商 AAR（`getFilesList`/`downloadRecordFiles`），不受影响。
+
+## Unreleased（2026-10-23 第十八轮：把调试出来的结论接回生产通道，并撤掉三个空头承诺）
+
+- **`pauseRecord` / `resumeRecord` 之前是假的**：插件只 `result.success("pauseRecord!")`，
+  一次都没碰厂商 SDK。真机已验通 `record(dev,2/3,mode)` → `onRecordExtended status=2|3`，
+  现在真的下发，并且**能力位 17 不在位时不发命令**（发了只会让上层干等超时）。
+- 新接通：`addMark`（`recordMark`，真机回 `status=0 index=1 offset=4110ms source=1`）、
+  `cancelDownload`（`stopDownloadFiles`；厂商口径：它**不**顺带关 WiFi，快传收尾仍要走
+  `switchWifi(false)` 的固定顺序）、`deleteFile`（`deleteRecordFile(sn,name)`）。
+- **AppKey 终于真的传进 SDK**：`startConnect` 增加 `appKey` 形参并在连接前补一次
+  `init(app, key)`。此前 `NeviewAdapter.connect` 收到 `authKey` 后直接丢弃，
+  而 v1.2.0 缺 key 时设备对任何命令都沉默 —— 设置页填的钥匙一直没生效。
+- **撤掉三个未验证的能力声明**（它们会让 UI 摆出能用其实不能用的按钮）：
+  `wifiTransfer`（三轮真机不通）、`firmwareUpgrade`（无固件包、从未验证、刷坏变砖）、
+  `deleteFile`（通道通了但不可逆且未验证，`deleteFile()` 现在明确抛
+  「故意不开放」而不是假装支持）。同时**新增** `addMark` 声明（已实测 + 通道已通）。
+  `liveAudio` 仍不声明：设备侧已验通，但 `BleDeviceAdapter` 契约没有取流方法，
+  声明了上层也拿不到 —— 等契约补上音频帧通道再开。
+- **「新录音延迟可见」收进适配器**：`NeviewAdapter.listFiles()` 现在在停止后 20 s 内、
+  且条数没有增长时自动重问（每次间隔 5 s、最多 3 次），调用方不必知道这个坑；
+  平时一次列表不多花一秒。`stopRecord()` 记下停止时刻作为触发条件。
+  之前它表现为「录完立刻刷新，新录音凭空消失」。
+- 验证：`flutter analyze` 干净（只剩两处既有 info）、`flutter build apk --debug` 通过、
+  全量 `flutter test` **110 条全绿**。
+- L3 探测台再补两类形状待跑：分页把「页号在前」和「每页条数在前」都试
+  （上一轮四档全是 `0#20` 这类，若第一个参数是页大小，沉默就不能当判负），
+  下载按 AAR 字节码的两支（`opusfile#2#…` 与五参数 `opusfile#…`）各试两个 sn，
+  且每档前先发 `getlist` 建立会话。卡已入睡（08:03 起 0 候选），计划文件保持 armed。
+- 观测：卡电量从 30% 掉到 20%，且每轮扫档都会持续推流 ~20 s × 多次 ——
+  反复扫档会明显耗电，这也可能是它几次「扫不到」的原因之一。
+
+## Unreleased（2026-10-23 第十七轮：真机再扫 38 项，文件内容级闭环验通）
+
+- 卡回来了，跑了第三轮厂商 AAR 全接口扫档（`OK=26 / TIMEOUT=9 / FAIL=1 / SKIP=2`），
+  逐项复现上一轮，并补上**内容级**判据：本轮实时采音 `vendor_rt_…​.opus`（70,480 B）
+  与从卡上下载回来的同一条录音 `vendor_dl_sn13.opus` **SHA-256 逐字节相同**。
+  之前的「实收==期望」只证明长度，这条才证明 `audio.live → 设备存储 → transfer.file` 是同一份数据。
+- 探测台的两处自身缺陷一并修掉：下载字节**必须落盘**才算验过内容；
+  闭环对比**必须按 sn 认文件**——上一版按长度配对，两轮录音时长一样（每步 sleep 固定秒数），
+  于是拿两条不同录音互比，报出 97.91% 字节差的**假 FAIL**。判据认身份，不认尺寸。
+- **两条真机行为值得记**：
+  1. `record stop` 之后紧接着的 `getFilesList` **不含刚录完那条**
+     （列表最大 sn=12，本轮设备报 sn=13），约 5 s 后重问才出现。
+     「录完立刻列文件」会看不到自己的新录音，不能拿第一次列表判断录音成败。
+     探测台已实现缺席时最多重问 3 次并单独记账；会话层同样要处理。
+  2. 设备会把**多条 `*DEV#` 文本帧合并进同一条 notify**（实测 55 B = flist+incharge+switch），
+     SDK 原来按 `#` 切会看到 13 段并抛 invalidFrame → 整批消息丢失。双端已修（见 SDK CHANGELOG）。
+- 裸协议侧新确证：`*DEV#flist#<正文总字节>#<页数>#`（6→7→10 条文件对应 985#3→1152#3→1653#4）；
+  但 `listreq#<页>#<条数>#` 四档参数与只读下载 `opusfile#<sn>#1#0#1#0#` **全部无回包**，
+  列表正文与下载请求帧仍需厂商给规则。WiFi 快传第三轮同样不通（两条路径复现）。
+- 设备侧计划文件已改回 `0`（探测关闭）。
+
+## Unreleased（2026-10-23 第十六轮：App 侧裸协议与 SDK 重新对齐，顺手抓出一个丢位的表）
+
+- 上一轮改了 SDK 的广播解析锚点，**App 侧 Dart 的 `NewviewRaw.parseAdvertisement` 没跟上**：
+  它还写死 `"NvEasy"` 字面量 + 取头 3 字节当 deviceCode，也就是真机已经否掉的那套旧规则。
+  镜像测试当时依然全绿 —— 因为它是**手抄** Kotlin 的旧逻辑，抄的是改动前的版本。
+  这轮把 Dart 改成与 Kotlin 同一套：先认 `"NvEasy"`，认不到就按尾部 `"NV"` 族标记倒推
+  厂商码起点；`deviceCode` 改取那 6 字节厂商码本身。真机 23B 原文现在两侧都解得开
+  （`ilynse` / proto 24 / sku `L1` / `f2 46 00 00`），并作为回归向量钉进测试。
+- **抓出一个「丢能力位」的表**：`abilityNames` 原先只有我们自己声明的 8 行，
+  厂商定义有 15 位。真机 mask 明明置了 `25 rtc`，探测台报 `declaredAbilities`
+  时却把它静默丢掉 —— 报 7 项、实际 8 项，**「我们不认识」被伪装成「设备没有」**。
+  现在表补全到 15 位，并把 `knownCapabilityMask` 拆成独立的
+  `sdkDeclaredAbilityBits`：前者是厂商全表、后者是我们声明的子集，
+  两者混成一张表的话差集检查就恒等于 0，再也指不出「声明与本机不符」。
+- `kotlinExpectedFieldCounts` 补上真机推过的四条原文（`incharge` 6 / `mem` 4 /
+  `flist` 4 / `switch` 3），`wifi` 8 那条明确标注**未经设备验证**；
+  段数变化时 `shapeVerdict` 会报 MISMATCH，这就是「Kotlin 的硬编码过时了」的信号。
+- 验证：`test/newview_protocol_mirror_test.dart` 16 条全绿，
+  仓库全量 `flutter test` **110 条全绿**（改动是共享文件，跑了全量回归）。
+
+## Unreleased（2026-10-23 第十五轮：Newview 剩三项待取证，探测台先把问题问对）
+
+- L3 加了两档**不依赖厂商 SDK** 的取证：
+  **列表分页**（`*APP#listreq#<页>#<条数>#` 四档，命中 JSON 就停并记下参数形状）和
+  **只读下载**（`*APP#opusfile#<sn>#1#0#1#0#`，`isDelete=false` 所以安全；
+  回包按「长度 %80」判容器形状，正文落盘 `newview_l3_dl_sn*.bin` 离线逐字节判）。
+  动因：真机对裸 `listreq` 只回**表头** `*DEV#flist#985#3#` / `#1152#3#`
+  （两轮数字随文件数 6→7 变化），说明列表正文要带页参数才推，
+  而我们 SDK 里既没有 `flist` 分支也没有下载请求帧 —— 这两条不能靠猜落地。
+- 探测计划文件当前停在 `3 only / name=Lynse`；卡一旦被扫到就跑出上面两档，
+  之后把计划改成 `4 only` 再跑一次 WiFi 凭据档（`autoConnect=false` → `onWifiOpened`）。
+- ⚠️ 卡 `Lynse AI 0091` 自 22:14 起多轮扫不到（11~25 条扫描结果里都没有它，
+  手机蓝牙正常、XYRI 那台一直在），疑被别的客户端占着或已休眠。
+  因此仍未取证：`flist` 正文、BLE 下载请求帧形状、WiFi 凭据上报。
+- OTA 按决定**只接接口不真刷**：没有可用固件包，且刷坏会变砖。
+  映射与判据已移植进 `lynse-hardware-sdk`（20 种 `OTAException` → Lynse 错误码、
+  包大小 448/≤460、`progress==100 ≠ 成功`、成功判据 = 重连读到目标版本），
+  能力在 descriptor 里保持不声明。
+
+## Unreleased（2026-10-22 第十四轮：**Newview 录音卡全接口真机扫档**，厂商 AAR 升到 v1.2.0）
+
+- 台架上是 `Lynse AI 0091`（BLE `E5:3C:F5:D3:D1:90`，proto 24，idMark `ilynse`，sku `L1`）。
+  新增 `android/.../nveasy/NewviewVendorProbe.kt`：以**厂商 SDK 为裁判**逐接口扫档，
+  每项单独计时判 OK/TIMEOUT/FAIL/SKIP，全部落盘 `newview_vendor_report.txt` + logcat `NVV`。
+  计划文件 `newview_probe.txt` 第二行加 `vendor=1` 触发；L1 裸协议跑完自动接扫档。
+- **换到厂商 `NvEasyBle-v1.2.0` + `NvEasyAudio-v1.0.3`**：原来的 v1.1.3 里
+  `init(Application)` **根本没有 appKey 形参**、整个类也不含 `*APP#appkey#` 字符串
+  （逐类扫描计数为 0），也完全没有 flashNote / recordMark / setActive / AI 档——
+  用它当「厂商能不能问通」的裁判是不成立的。v1.2.0 只有一处 API 破坏：
+  OTA 回调 `onFail(BleException)` 收窄成 `onFail(OTAException)`，已改。
+  v1.2.0 的 `aar-metadata` 要求 compileSdk 37，本机只有 36 且 AGP 8.13.2 封顶 36，
+  所以联调用了一份**只改那一行元数据**的 `NvEasyBle-v1.2.0_minSdk36.aar`
+  （classes.jar 逐字节相同）；装机验完要换回原包或升到 37。
+- **实测通过的接口**：`queryVersion 1.5.1/0.3.0`、`queryBattery 30%`、`queryChargeStatus`、
+  `querySwitch`、`queryAuthSN`（authSN + bleMac + wifiMac + labelSN）、`queryBleName`、
+  `queryBluetoothName T2403`、`queryOffTime 36000`、`queryMicGain`（会议 17/17、通话 17/13）、
+  `record` 开始/暂停/恢复/停止、`recordMark`、`onStream` 实时流、`getFilesList`、
+  BLE `downloadRecordFiles`（sn=10 期望=实收 70,480 B）。
+- **实时音频是 16000 Hz / 双声道 / 20 ms / 80 B 一包**（`onRecordExtended` 随流上报），
+  不是单声道；proto≥24 只认 `onRecordExtended`。
+- **闭环验证**：第二轮下载的 `sn=10 612991.raw` 就是第一轮实时采音落到卡上的那个文件，
+  字节数逐字节相等——「实时流 → 设备存储 → BLE 下载」这条链成立。
+- **WiFi 快传仍未通**，且两条设计路径都堵：`switchWifi(true, autoConnect=true)` 走到
+  `OPENING→OPENED→CONNECTING` 就停住；改 `autoConnect=false` 后 30 s 内
+  设备**没有**回报 `onWifiOpened` 凭据。我先把它归因成「缺 `NEARBY_WIFI_DEVICES`」，
+  **那个归因错了**——台架是 Android 12 / API 31，这条权限在这台机器上还不存在
+  （`pm grant` 报 `Unknown permission`），而 `ACCESS_FINE_LOCATION` 早已 granted=true。
+  权限声明仍补进了 manifest（与 AAR 对齐，Android 13+ 才是前提），但不是本轮原因。
+- **一处曾经下错的判据**：21:41 那轮这台卡对所有 `*APP#` 命令全沉默，当时判成
+  「鉴权是闸门」。22:03 重跑，**不发任何握手** 5/6 直接有回包
+  （`version/battery/mem/getlist/listreq`，其中 `listreq` 回 `*DEV#flist#985#3#`，
+  说明列表真身在 `flist` 分支、我们 SDK 里没有这个分支）。沉默的原因是**设备状态**。
+  另外发完明文 `rtc/ostype` 初始化后掉到 0/6 —— 那两帧会把会话打死，
+  探测顺序必须改成「先问完，最后再试初始化」。
+- 能力位可以当接口开关用：缺席的 19/21/26/27/24 恰好对应 `flashNote` 无回包、
+  `readDeviceInfo/edr/call` 明确 `onCommandFailed`。
+- 装机注意：`adb` 在 Git Bash 下会把 `/sdcard/...` 改写成 `C:/Program Files/Git/sdcard/...`，
+  需要 `export MSYS_NO_PATHCONV=1`。
+
 ## Unreleased（2026-10-21 第十三轮：**WiFi 快传真机闭环 —— 五项全通**）
 
 - 结论先说：`0x21 开热点+起 TCP` → 手机入网 → BLE 发 `0x46 [0:/文件名][4B 大端偏移]`

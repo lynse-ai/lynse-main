@@ -10,6 +10,7 @@ import com.nveasy.ble.NoiseCancellation
 import com.nveasy.ble.callback.NvEasyBleOTACallback
 import com.nveasy.ble.data.NvEasyFile
 import com.nveasy.ble.exception.BleException
+import com.nveasy.ble.exception.OTAException
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -318,6 +319,10 @@ fun BleManager.handleOnFileStream(
                     )
                     if (downloadFile.getSn() == fileIndex && downloadFile.getOffset() > 0 && mBPResumeFilePath != null) {
                         mDownloadFileStream = FileOutputStream(mBPResumeFilePath, true)
+                        // 续传写的是断点文件，opusDownFilePath 必须跟着指过去：
+                        // 它仍是下面 opusToPcm 的输入，不更新就会拿上一次的
+                        // 旧路径去转码，本次收到的字节永远不会被解码
+                        opusDownFilePath = mBPResumeFilePath!!
                         isBPResumeFile = true
                         break
                     }
@@ -346,31 +351,56 @@ fun BleManager.handleOnFileStream(
                     scene = find.scene
                     recordStartTime = find.startTime * 1000
                 }
-                opusToPcm(
-                    opusDownFilePath,
-                    currentPacket,
-                    totalPackets,
-                    fileDuration,
-                    scene,
-                    audioUtils.formatTime(recordStartTime)
-                )
-                Log.d(
-                    "DTingChannel",
-                    "文件保存完成,文件时长: $fileDuration, 场景: $scene, 开始时间: $recordStartTime ${
-                        audioUtils.formatTime(recordStartTime)
-                    }"
-                )
 
-                for (downloadFile in mDownloadFiles) {
-                    if (downloadFile.getSn() == fileIndex) {
-                        mDownloadFiles.remove(downloadFile)
-                        break
+                // 完整性校验：包数齐了不等于内容齐了——丢包/脏包也可能凑满
+                // totalPackets。以设备在文件列表里声明的字节数为准核对落盘大小，
+                // 不吻合就绝不转码：半截 OPUS 会产出一条"能打开但内容缺失"的录音，
+                // 用户直到回放才发现，而那时断点已被清掉，无法补救。
+                mDownloadFileStream?.flush()
+                mDownloadFileStream?.close()
+                mDownloadFileStream = null
+                val expectedBytes = find?.size ?: 0
+                val actualBytes =
+                    if (opusDownFilePath.isNotEmpty()) File(opusDownFilePath).length() else 0L
+                if (expectedBytes > 0 && actualBytes != expectedBytes.toLong()) {
+                    Log.e(
+                        "DTingChannel",
+                        "完整性校验失败 已落盘=$actualBytes 期望=$expectedBytes 路径=$opusDownFilePath"
+                    )
+                    LogUtils.getInstance().e(
+                        "下载",
+                        "完整性校验失败 已落盘=$actualBytes 期望=$expectedBytes，跳过转码并保留断点"
+                    )
+                    eventHandler.sendError(
+                        "download_incomplete:$fileIndex:$actualBytes:$expectedBytes"
+                    )
+                } else {
+                    opusToPcm(
+                        opusDownFilePath,
+                        currentPacket,
+                        totalPackets,
+                        fileDuration,
+                        scene,
+                        audioUtils.formatTime(recordStartTime)
+                    )
+                    Log.d(
+                        "DTingChannel",
+                        "文件保存完成,文件时长: $fileDuration, 场景: $scene, 开始时间: $recordStartTime ${
+                            audioUtils.formatTime(recordStartTime)
+                        }"
+                    )
+
+                    for (downloadFile in mDownloadFiles) {
+                        if (downloadFile.getSn() == fileIndex) {
+                            mDownloadFiles.remove(downloadFile)
+                            break
+                        }
                     }
-                }
-                // 重置断点续传参数
-                if (isSupportBreakpointResume()) {
-                    if (fileIndex == mBPResumeSN) {
-                        clearResumeDataOffset()
+                    // 重置断点续传参数
+                    if (isSupportBreakpointResume()) {
+                        if (fileIndex == mBPResumeSN) {
+                            clearResumeDataOffset()
+                        }
                     }
                 }
             } else { //实时保存断点续传
@@ -417,7 +447,8 @@ fun BleManager.handleDeviceUpdateOta(filePath: String, version: String) {
                 )
             }
 
-            override fun onFail(p0: BleException?) {
+            // v1.2.0 把这个回调的形参从 BleException 收窄成了 OTAException。
+            override fun onFail(p0: OTAException?) {
                 Log.d("DTingChannel", "升级设备失败")
                 eventHandler.sendDeviceUpdateOtaStatus(
                     EventHandler.OtaUpdateStatus.FAILED.value,
@@ -482,6 +513,41 @@ fun BleManager.handleStartRecord() {
         }
     } catch (e: Exception) {
         Log.e("DTingChannel", "开始录音失败: ${e.localizedMessage ?: "未知错误"}")
+        e.printStackTrace()
+    }
+}
+
+/**
+ * 暂停(2) / 恢复(3) 录音。
+ *
+ * 真机口径（2026-10-23）：厂商对这两位都会回 `onRecordExtended status=2|3`，
+ * 且 `recordMark` 的 `offset` 坐标系是**不含暂停时长**的毫秒数
+ * （厂商文档原文：`offsetTime` 为「不含暂停的录音时长」）。
+ * 所以这里只把命令发出去，本地时间轴一律不自己减：
+ * 需要「墙上时间」的场合由设备回包里的 offset 换算。
+ *
+ * 只有能力位 `ABILITY_RECORD_PAUSE_RESUME(17)` 在位时才允许暂停，
+ * 否则按厂商语义发过去就是设备沉默 + 上层卡在等待里。
+ */
+fun BleManager.handlePauseOrResume(status: Int) {
+    val device = currentDevice
+    if (device == null) {
+        Log.e("DTingChannel", "设备未连接，无法暂停/恢复录音")
+        return
+    }
+    if (status != 2 && status != 3) {
+        Log.e("DTingChannel", "handlePauseOrResume 参数非法：$status（只允许 2 暂停 / 3 恢复）")
+        return
+    }
+    if (status == 2 && !device.hasAbility(17)) {
+        Log.e("DTingChannel", "本机不支持暂停录音（缺 ABILITY_RECORD_PAUSE_RESUME），命令不下发")
+        return
+    }
+    try {
+        Log.d("DTingChannel", "发录音状态命令 status=$status mRecordType=$mRecordType")
+        nvEasyBleManager.record(device, status, mRecordType)
+    } catch (e: Exception) {
+        Log.e("DTingChannel", "暂停/恢复录音失败: ${e.localizedMessage ?: "未知错误"}")
         e.printStackTrace()
     }
 }

@@ -4,6 +4,7 @@ library;
 import 'package:dting/core/services/assistant_service.dart';
 import 'package:dting/router/modules/assistant_router.dart';
 import 'package:dting/ui/components.dart';
+import 'package:dting/ui/glass.dart';
 import 'package:dting/ui/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -47,38 +48,44 @@ class _AssistantChatPageState extends State<AssistantChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('助手'),
-        actions: [
-          IconButton(
-            tooltip: '新会话',
-            icon: const Icon(Icons.add_comment_outlined, size: 20, color: LColors.muted),
-            onPressed: () => _service.newSession(),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Obx(() {
-              final msgs = _service.messages;
-              if (msgs.isEmpty) return _buildWelcome();
-              return ListView.builder(
-                padding: const EdgeInsets.all(LSpacing.xl),
-                itemCount: msgs.length + (_service.thinking.value ? 1 : 0),
-                itemBuilder: (_, i) {
-                  if (i == msgs.length) {
-                    return const _ThinkingBubble();
-                  }
-                  return _MessageBubble(message: msgs[i], onJumpRecording: _jumpRecording);
-                },
-              );
-            }),
-          ),
-          _buildInput(),
-        ],
+    return LGlassBackdrop(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          flexibleSpace: const LGlassAppBarLayer(),
+          title: const Text('助手'),
+          actions: [
+            IconButton(
+              tooltip: '新会话',
+              icon: const Icon(Icons.add_comment_outlined,
+                  size: 20, color: LColors.muted),
+              onPressed: () => _service.newSession(),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: Obx(() {
+                final msgs = _service.messages;
+                if (msgs.isEmpty) return _buildWelcome();
+                return ListView.builder(
+                  padding: const EdgeInsets.all(LSpacing.xl),
+                  itemCount: msgs.length + (_service.thinking.value ? 1 : 0),
+                  itemBuilder: (_, i) {
+                    if (i == msgs.length) {
+                      return const _ThinkingBubble();
+                    }
+                    return _MessageBubble(
+                        message: msgs[i], onJumpRecording: _jumpRecording);
+                  },
+                );
+              }),
+            ),
+            _buildInput(),
+          ],
+        ),
       ),
     );
   }
@@ -156,24 +163,39 @@ class _AssistantChatPageState extends State<AssistantChatPage> {
           }),
           Padding(
             padding: const EdgeInsets.fromLTRB(LSpacing.xl, 8, LSpacing.xl, LSpacing.md),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    onSubmitted: (_) => _send(),
-                    textInputAction: TextInputAction.send,
-                    decoration: const InputDecoration(hintText: '问你的助手…'),
+            child: LGlass(
+              floating: true,
+              shadow: true,
+              radius: LRadius.input,
+              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      onSubmitted: (_) => _send(),
+                      textInputAction: TextInputAction.send,
+                      // 玻璃层已有填充与描边，输入框自身不能再压一块实色底
+                      decoration: const InputDecoration(
+                        hintText: '问你的助手…',
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        filled: false,
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Obx(() => LButton(
-                      label: _service.thinking.value ? '…' : '发送',
-                      icon: _service.thinking.value ? Icons.hourglass_top : Icons.send,
-                      primary: true,
-                      onPressed: _service.thinking.value ? null : () => _send(),
-                    )),
-              ],
+                  const SizedBox(width: 10),
+                  Obx(() => LButton(
+                        label: _service.thinking.value ? '…' : '发送',
+                        icon: _service.thinking.value
+                            ? Icons.hourglass_top
+                            : Icons.send,
+                        primary: true,
+                        onPressed: _service.thinking.value ? null : () => _send(),
+                      )),
+                ],
+              ),
             ),
           ),
         ],

@@ -84,25 +84,29 @@ abstract class BleDeviceAdapter {
 }
 
 /// 互斥资源仲裁：录音、文件传输、OTA 互斥（Neview 硬约束，全厂商统一遵守）。
+///
+/// ⚠️ **同一资源也不许重入**。旧实现写成 `held != null && held != resource`，
+/// 于是两次并发 `fileTransfer`（下载中又触发一次导入/刷新）双双通过，
+/// 两条命令就同时压在卡上——正是 `ResourceArbiter` 想防的事。
+/// 现在只要有人持有资源就拒；「命令之间的先后」由 [CommandLane] 负责排队，
+/// 两者分工：这里是准入，那里是顺序。
 class ResourceArbiter {
   ExclusiveResource? _held;
 
   /// 占用资源；已被占用时抛 [HardwareException]（resourceBusy）。
   void acquire(ExclusiveResource resource) {
     final held = _held;
-    if (held != null && held != resource) {
+    if (held != null) {
       throw HardwareException(
         HardwareErrorCode.resourceBusy,
-        '资源被占用: $held，请求: $resource',
+        held == resource ? '资源已被同类操作占用: $resource' : '资源被占用: $held，请求: $resource',
       );
     }
     _held = resource;
   }
 
   void release(ExclusiveResource resource) {
-    if (_held == resource) {
-      _held = null;
-    }
+    if (_held == resource) _held = null;
   }
 
   ExclusiveResource? get held => _held;

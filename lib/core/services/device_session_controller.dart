@@ -10,7 +10,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dting/config/config.dart';
+import 'package:flutter/foundation.dart';
 import 'package:dting/core/hardware/hardware_kit.dart';
+import 'package:dting/core/hardware/sdk/sdk_device_adapter.dart';
+import 'package:dting/core/hardware/sdk/sdk_hardware_runtime.dart';
+import 'package:dting/core/hardware/sdk/wifi_hotspot.dart';
+import 'package:dting/features/device/widgets/hotspot_guide_dialog.dart';
+import 'package:dting/plugin/nv_easy_plugin.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
@@ -38,8 +44,8 @@ class DeviceSessionController extends GetxController {
   /// 最近一次成功连接的设备（json：vendorId/deviceId/name），供启动自动重连
   static const String _lastDeviceKey = 'lastHwDeviceJson';
 
-  late final NeviewAdapter neview;
-  late final XyrixAdapter xyrix;
+  late final BleDeviceAdapter neview;
+  late final BleDeviceAdapter xyrix;
   late final AdapterRegistry registry;
 
   final ResourceArbiter _arbiter = ResourceArbiter();
@@ -92,16 +98,43 @@ class DeviceSessionController extends GetxController {
   }
 
   /// App 启动时调用一次（NvEasyPlugin.init 之后）
-  void bootstrap() {
+  Future<void> bootstrap() async {
     _loadDownloadedNames();
-    neview = NeviewAdapter()..attach();
-    xyrix = XyrixAdapter();
+    if (Config.useSdkHardware) {
+      try {
+        final appKey = LocalDataBase().basicBox!.get('neview_appkey')?.toString() ??
+            Config.newviewAppKey;
+        await SdkHardwareRuntime.instance.ensureInitialized(appKey: appKey);
+        neview = SdkDeviceAdapter(
+          vendorId: HardwareVendor.neview,
+          adapterId: 'com.lynse.protocol.newview',
+          runtime: SdkHardwareRuntime.instance,
+        );
+        xyrix = SdkDeviceAdapter(
+          vendorId: HardwareVendor.xyrix,
+          adapterId: 'com.lynse.protocol.xyrix',
+          runtime: SdkHardwareRuntime.instance,
+        );
+      } catch (error) {
+        // SDK 初始化失败时保留旧路径可用，避免整个设备页打不开。
+        lastError.value = 'SDK 初始化失败，已回退旧适配器：$error';
+        _bootstrapLegacy();
+      }
+    } else {
+      _bootstrapLegacy();
+    }
     registry = AdapterRegistry()
       ..register(neview)
       ..register(xyrix);
     for (final adapter in registry.all) {
       _subs[adapter.vendorId] = adapter.events.listen(_onEvent);
     }
+  }
+
+  void _bootstrapLegacy() {
+    NvEasyPlugin.init();
+    neview = NeviewAdapter()..attach();
+    xyrix = XyrixAdapter();
   }
 
   void _onEvent(HardwareEvent event) {
@@ -257,6 +290,11 @@ class DeviceSessionController extends GetxController {
   }
 
   Future<void> connect(DiscoveredDevice device, {String? authKey}) async {
+    // SDK 只允许一个活动会话；从一家厂商切到另一家时，先把旧会话断开。
+    if (connectionPhase.value.isUsable && activeVendor.value != device.vendorId) {
+      await disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
     // 厂商由设备广播决定，切换 active adapter
     activeVendor.value = device.vendorId;
     final key = authKey ??
@@ -266,6 +304,21 @@ class DeviceSessionController extends GetxController {
     await queryDeviceInfo();
     // 连接成功自动拉取设备文件列表，列表卡片即刻可用
     await refreshFiles();
+    if (Config.autoDownloadSmallest) {
+      // 列表是事件流异步落地的（`FileListEvent` → `deviceFiles`），
+      // `refreshFiles()` 返回时常常还是空的，直接判空就等于这个开关永远不生效。
+      for (var i = 0; i < 20 && deviceFiles.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      if (deviceFiles.isNotEmpty) {
+        final smallest = deviceFiles.reduce(
+          (a, b) => a.sizeBytes <= b.sizeBytes ? a : b,
+        );
+        unawaited(
+          downloadDeviceFile(smallest, useWifi: Config.autoDownloadWifi),
+        );
+      }
+    }
     // 记住最近连接的设备：下次进外壳页自动重连（不经扫描，按系统设备
     // 标识直连，扫描列表刷不出来时也能连上）
     LocalDataBase().basicBox!.put(
@@ -402,6 +455,13 @@ class DeviceSessionController extends GetxController {
   Future<void> refreshFiles() async {
     try {
       _arbiter.acquire(ExclusiveResource.fileTransfer);
+    } on HardwareException catch (e) {
+      // 刷新是幂等的、也不是用户显式动作：占用中就直接跳过，不弹错。
+      // 真正的顺序问题由适配器的命令车道保证，这里只做准入。
+      _selfTestLog('[链路] refreshFiles 跳过：${e.message}');
+      return;
+    }
+    try {
       await active?.listFiles();
     } on HardwareException catch (e) {
       lastError.value = e.message;
@@ -413,19 +473,121 @@ class DeviceSessionController extends GetxController {
   Future<void> downloadDeviceFile(RecordingFile file,
       {bool useWifi = true, bool resume = true}) async {
     final adapter = active;
-    if (adapter == null) return;
+    if (adapter == null) {
+      debugPrint('[LynseSDK] download skipped: device not connected');
+      return;
+    }
+    debugPrint(
+      '[LynseSDK] download start name=${file.name} useWifi=$useWifi '
+      'wifiCap=${adapter.capabilities.supports(HardwareCapability.wifiTransfer)}',
+    );
     try {
+      // 准入在**发起前**拿到，并且一直持有到这条传输真正收尾（见 _awaitTransferSettled）。
+      // 旧实现拿到就放，等于没锁：下载中再点一次导入，两条流会压在卡上。
       _arbiter.acquire(ExclusiveResource.fileTransfer);
+    } on HardwareException catch (e) {
+      debugPrint('[LynseSDK] download rejected by arbiter: ${e.message}');
+      lastError.value = e.message;
+      return;
+    }
+    try {
       final transport = useWifi &&
               adapter.capabilities.supports(HardwareCapability.wifiTransfer)
           ? TransferTransport.wifi
           : TransferTransport.ble;
+      debugPrint('[LynseSDK] transport=$transport');
+      if (transport == TransferTransport.wifi) {
+        // 弹窗等 0x21 把热点开起来之后再出现，否则用户去 WLAN 里还看不到它。
+        unawaited(_guideHotspot());
+      }
+      // 先挂监听再下发，避免「完成事件比 future 先到」时错过收尾。
+      final settled = _awaitTransferSettled(adapter);
       await adapter.downloadFile(file, transport: transport, resume: resume);
+      await settled;
     } on HardwareException catch (e) {
+      debugPrint('[LynseSDK] download failed: ${e.message}');
       lastError.value = e.message;
     } finally {
       _arbiter.release(ExclusiveResource.fileTransfer);
     }
+  }
+
+  /// WiFi 快传：先传用户点的那一个，然后**依次把卡里还没下载的文件全部拉过来**。
+  /// 走的还是单文件下载（每份都要 0x21/触发/TCP）；失败就停，不反复折腾卡。
+  Future<void> downloadAllOverWifi(RecordingFile first) async {
+    lastError.value = null;
+    final queue = <RecordingFile>[
+      first,
+      ...deviceFiles.where((f) => f.name != first.name && !isDownloaded(f.name)),
+    ];
+    debugPrint('[LynseSDK] wifi batch queue=${queue.length}');
+    for (final file in queue) {
+      await downloadDeviceFile(file, useWifi: true);
+      if (lastError.value != null) {
+        debugPrint('[LynseSDK] wifi batch stopped at ${file.name}: ${lastError.value}');
+        break;
+      }
+    }
+  }
+
+  /// 快传前的一次点击引导：不在卡的热点上就弹窗，用户连上后自动关闭、传输继续。
+  /// 等 2 秒是为了让 SDK 先把 `0x21` 发出去——热点没起来时用户去 WLAN 里看不到它。
+  Future<void> _guideHotspot() async {
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (await WifiHotspot.isOnDeviceAccessPoint()) return;
+    final context = Get.context;
+    if (context == null) return;
+    final name = _hotspotName();
+    debugPrint('[LynseSDK] hotspot guide shown: $name');
+    await showHotspotGuideDialog(context, hotspotName: name);
+  }
+
+  /// 热点名 = `AP_` + 当前卡序列号（每张卡不同）；拿不到 SN 时退回配置里的 SSID。
+  String _hotspotName() {
+    final sn = deviceInfo.value?.serialNumber;
+    if (sn != null && sn.isNotEmpty) return 'AP_$sn';
+    final ap = Config.xyrixAp;
+    final index = ap.indexOf(':');
+    if (index > 0) return ap.substring(0, index);
+    return ap.isEmpty ? '卡片热点' : ap;
+  }
+
+  /// 等到这条传输收尾（落地/失败/取消/回 idle）或超时，才允许释放 `fileTransfer`。  ///
+  /// 判据取自适配器**已翻译过**的事件：`transferring` 出现过之后的任何非 transferring
+  /// 状态都算收尾；`FileImportedEvent`（文件真的落盘）与 `HardwareErrorEvent` 也算。
+  /// 用「先见过 transferring」做闸，是为了不把上一条传输的残留终态当成本条结束。
+  Future<void> _awaitTransferSettled(
+    BleDeviceAdapter adapter, {
+    Duration timeout = const Duration(minutes: 10),
+  }) {
+    final done = Completer<void>();
+    var sawTransferring = false;
+    late final StreamSubscription<HardwareEvent> sub;
+    void finish() {
+      if (!done.isCompleted) done.complete();
+    }
+
+    sub = adapter.events.listen((event) {
+      if (done.isCompleted) return;
+      switch (event) {
+        case TransferProgressEvent(:final progress):
+          if (progress.state == TransferState.transferring) {
+            sawTransferring = true;
+          } else if (sawTransferring || progress.state != TransferState.idle) {
+            finish();
+          }
+        case FileImportedEvent():
+          finish();
+        case HardwareErrorEvent():
+          finish();
+        default:
+          break;
+      }
+    });
+    return done.future
+        .timeout(timeout,
+            onTimeout: () => _selfTestLog('[链路] 传输 10 分钟未收尾，强制释放 fileTransfer'))
+        .whenComplete(() => sub.cancel());
   }
 
   /// 用户主动中止进行中的传输：断点作废，不会在下次自动续传。

@@ -26,11 +26,21 @@ dependencies:
   package_info_plus: ^8.3.0
   connectivity_plus: ^6.1.0
 
+  # LYNSE Hardware SDK 公共契约（Pigeon 桥）
+  lynse_hardware_contract:
+    path: lynse-hardware-sdk/contracts/dart
+
+  # 悬浮玻璃件：liquid_glass_renderer 出真液态折射，glass_kit 出玻璃面板
+  # 两者都要求 Flutter >= 3.32.4（本项目已升到 3.47.6）
+  glass_kit: ^4.0.2
+  liquid_glass_renderer: ^0.2.0-dev.4
+
   flutter_localizations:
     sdk: flutter
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  fake_async: ^1.3.1
   flutter_launcher_icons: ^0.14.3
   flutter_lints: ^5.0.0
   json_serializable: ^6.9.4

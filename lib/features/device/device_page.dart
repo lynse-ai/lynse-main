@@ -7,6 +7,7 @@ library;
 import 'package:dting/core/hardware/hardware_kit.dart';
 import 'package:dting/core/services/device_session_controller.dart';
 import 'package:dting/ui/components.dart';
+import 'package:dting/ui/glass.dart';
 import 'package:dting/ui/tokens.dart';
 import 'package:dting/utils/local_database.dart';
 import 'package:flutter/material.dart';
@@ -49,7 +50,7 @@ class DevicePage extends StatelessWidget {
           if (p == null || p.state == TransferState.idle) {
             return const SizedBox.shrink();
           }
-          return _TransferCard(progress: p);
+          return _TransferCard(progress: p, onCancel: c.cancelTransfer);
         }),
         // ---- 3b. 快传建链阶段提示（无字节进度时）----
         Obx(() {
@@ -122,7 +123,10 @@ class DevicePage extends StatelessWidget {
             onRefresh: c.refreshFiles,
             // 行点默认走蓝牙下载（实测稳定）；"快传"按钮走 WiFi 热点+TCP
             onDownload: (f) => c.downloadDeviceFile(f, useWifi: false),
-            onQuickTransfer: (f) => c.downloadDeviceFile(f, useWifi: true),
+            onQuickTransfer: (f) => c.downloadAllOverWifi(f),
+            quickTransferEnabled: c.active?.capabilities
+                    .supports(HardwareCapability.wifiTransfer) ??
+                false,
           );
         }),
       ],
@@ -133,11 +137,20 @@ class DevicePage extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: LColors.canvas,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(LRadius.sheet)),
+      // 透明交给 LGlass 做模糊面；showModalBottomSheet 自身没有 blur 开关，
+      // 留实色底就会把身后的光斑挡掉，玻璃感全无
+      backgroundColor: Colors.transparent,
+      barrierColor: LColors.modalShade,
+      builder: (_) => SafeArea(
+        top: false,
+        child: LGlass(
+          strong: true,
+          radius: 0,
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(LRadius.sheet)),
+          child: const _AddDeviceSheet(),
+        ),
       ),
-      builder: (_) => const _AddDeviceSheet(),
     );
   }
 }
@@ -357,9 +370,10 @@ class _RecordControlCard extends StatelessWidget {
 // --------------------------------------------------------------------
 
 class _TransferCard extends StatelessWidget {
-  const _TransferCard({required this.progress});
+  const _TransferCard({required this.progress, required this.onCancel});
 
   final TransferProgress progress;
+  final VoidCallback onCancel;
 
   static String _fmtSize(int bytes) {
     if (bytes >= 1024 * 1024) {
@@ -368,8 +382,58 @@ class _TransferCard extends StatelessWidget {
     return '${(bytes / 1024).toStringAsFixed(0)} KB';
   }
 
+  /// 传输条那一行的文案。**只有厂商真报了字节数才配说 KB**：
+  /// Neview 的 `didUpdateDownloadFileProgress` 只给包号（`receivedBytes`/`totalBytes`
+  /// 恒为 null），之前一律按 0 渲染就显示成「0 KB / 0 KB · 37%」——百分比是对的，
+  /// 字节却是编出来的，看着像传输根本没动。没数就照实说包数，不猜每包多大
+  /// （每包尺寸要等 `opusfile` 首包才知道，且按固件不同会变）。
+  /// 百分比两种情况下都留着：它来自包号，本来就可信。
+  String _progressLabel() {
+    final total = progress.totalBytes;
+    final amount = total != null && total > 0
+        ? '${_fmtSize(progress.receivedBytes ?? 0)} / ${_fmtSize(total)}'
+        : progress.totalPacket > 1 || progress.currentPacket > 0
+            ? '第 ${progress.currentPacket}/${progress.totalPacket} 包'
+            : null;
+    final percent = '${(progress.fraction * 100).toStringAsFixed(0)}%';
+    return amount == null ? percent : '$amount · $percent';
+  }
+
+  /// 终止态文案：把「链路结束」和「内容完好」区分开说。
+  /// 校验不通过的字节不会成为一条录音，用户必须知道它被丢弃了。
+  ({String text, Color color, double fill}) _statusOf(TransferProgress p) {
+    final integrity = p.integrity;
+    return switch (p.state) {
+      TransferState.completed => (
+          text: switch (integrity) {
+            TransferIntegrity.verified => '传输完成，字节校验通过',
+            TransferIntegrity.sizeMismatch => '校验未通过，本次内容已丢弃',
+            _ => '传输完成（设备未确认大小，未校验）',
+          },
+          color: integrity == TransferIntegrity.sizeMismatch
+              ? LColors.danger
+              : LColors.blueDark,
+          fill: 1.0,
+        ),
+      TransferState.failed =>
+        (text: '传输中断，可重新下载', color: LColors.danger, fill: p.fraction),
+      TransferState.cancelled => (
+          text: '已取消，断点已清除',
+          color: LColors.muted,
+          fill: p.fraction
+        ),
+      _ => (
+          text: '',
+          color: LColors.blueDark,
+          fill: p.fraction
+        ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
+    final status = _statusOf(progress);
+    final transferring = progress.state == TransferState.transferring;
     return LCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,15 +443,19 @@ class _TransferCard extends StatelessWidget {
               const Expanded(child: LSectionHeading(label: '文件传输')),
               if (progress.speedKbps > 0)
                 Text('${progress.speedKbps} KB/s', style: LType.small),
+              if (transferring) ...[
+                const SizedBox(width: 8),
+                LButton(label: '取消', small: true, onPressed: onCancel),
+              ],
             ],
           ),
           const SizedBox(height: 8),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
-              value: progress.fraction.clamp(0.0, 1.0),
+              value: status.fill.clamp(0.0, 1.0),
               backgroundColor: LColors.line,
-              color: LColors.blueDark,
+              color: status.color,
               minHeight: 6,
             ),
           ),
@@ -397,13 +465,16 @@ class _TransferCard extends StatelessWidget {
                 ? '传输失败，请重试'
                 : progress.state == TransferState.cancelled
                     ? '传输已取消'
-                    : '${_fmtSize(progress.receivedBytes ?? 0)} / '
-                        '${_fmtSize(progress.totalBytes ?? 0)}'
-                        ' · ${(progress.fraction * 100).toStringAsFixed(0)}%',
+                    : _progressLabel(),
             style: progress.state == TransferState.failed
                 ? LType.small.copyWith(color: LColors.danger)
                 : LType.small,
           ),
+          if (status.text.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(status.text,
+                style: LType.small.copyWith(color: status.color)),
+          ],
         ],
       ),
     );
@@ -422,6 +493,7 @@ class _FileListCard extends StatelessWidget {
     required this.onRefresh,
     required this.onDownload,
     required this.onQuickTransfer,
+    required this.quickTransferEnabled,
   });
 
   final List<RecordingFile> files;
@@ -432,6 +504,10 @@ class _FileListCard extends StatelessWidget {
 
   /// WiFi 热点+TCP 快传（整行点击之外的显式按钮）
   final ValueChanged<RecordingFile> onQuickTransfer;
+
+  /// 厂商是否真的支持 WiFi 快传（能力清单说了算）。不支持就不摆按钮——
+  /// 摆一个必然失败的「快传」比没有这个入口更糟。
+  final bool quickTransferEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -478,11 +554,13 @@ class _FileListCard extends StatelessWidget {
                 onTap: downloaded ? null : () => onDownload(f),
                 trailing: downloaded
                     ? const LChip(label: '已下载', tint: LColors.green)
-                    : LButton(
-                        label: '快传',
-                        small: true,
-                        onPressed: () => onQuickTransfer(f),
-                      ),
+                    : quickTransferEnabled
+                        ? LButton(
+                            label: '快传',
+                            small: true,
+                            onPressed: () => onQuickTransfer(f),
+                          )
+                        : const SizedBox.shrink(),
               );
             }),
         ],
@@ -511,6 +589,24 @@ class _AddDeviceSheetState extends State<_AddDeviceSheet> {
   void initState() {
     super.initState();
     _c = DeviceSessionController.instance;
+    /**
+     * 回填已保存的 AppKey。之前这里不回填，框里永远是空的：
+     * 值其实**已经**存进 Hive（只有「扫描并连接」会顺手 put 一次），
+     * 但使用者看不到，也就以为「没有保存按钮 = 没保存成功」——2026-10-23 就是这里卡的。
+     */
+    final saved = LocalDataBase().basicBox?.get('neview_appkey')?.toString() ?? '';
+    if (saved.isNotEmpty) _appKeyController.text = saved;
+  }
+
+  /// 显式保存：不靠「扫描并连接」的副作用，也别在这里碰设备。
+  Future<void> _saveAppKey() async {
+    final key = _appKeyController.text.trim();
+    if (key.isEmpty) {
+      Get.snackbar('未保存', 'AppKey 是空的');
+      return;
+    }
+    await LocalDataBase().basicBox!.put('neview_appkey', key);
+    if (mounted) Get.snackbar('已保存', 'AppKey 已存进本机（下次连接自动带上）');
   }
 
   @override
@@ -554,9 +650,25 @@ class _AddDeviceSheetState extends State<_AddDeviceSheet> {
               ),
               if (_vendor == HardwareVendor.neview) ...[
                 const SizedBox(height: 12),
-                TextField(
-                  controller: _appKeyController,
-                  decoration: const InputDecoration(hintText: '请输入 16 位 AppKey（厂商码）'),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _appKeyController,
+                        obscureText: true,
+                        decoration: const InputDecoration(hintText: '请输入 16 位 AppKey（厂商码）'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    LButton(
+                      label: '保存',
+                      icon: Icons.lock_outline,
+                      // 不是 primary：主按钮仍然是下面那条「扫描并连接」
+                      primary: false,
+                      onPressed: _saveAppKey,
+                    ),
+                  ],
                 ),
               ],
               const SizedBox(height: 16),

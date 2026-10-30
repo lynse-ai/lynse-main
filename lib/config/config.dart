@@ -1,5 +1,38 @@
 /// 全局开关配置（助手版仅保留硬件联调脚手架；登录/微信配置已随旧链路移除）。
 class Config {
+  /// 走统一 LYNSE Hardware SDK（默认）；false 时回退到旧的双 Dart 适配器。
+  static const bool useSdkHardware = bool.fromEnvironment(
+    'USE_SDK_HARDWARE',
+    defaultValue: true,
+  );
+
+  /// WiFi 快传能力开关：只有真机验收通过后才在构建时打开。
+  static const bool newViewWifiVerified = bool.fromEnvironment(
+    'NV_WIFI_VERIFIED',
+    defaultValue: false,
+  );
+  static const bool xyrixWifiVerified = bool.fromEnvironment(
+    'XYRIX_WIFI_VERIFIED',
+    defaultValue: false,
+  );
+
+  /// Xyrix 带外热点参数（`SSID:口令`）与 TCP 端点；测试期用 --dart-define 注入，
+  /// 不进仓库、不进日志。
+  static const String xyrixAp = String.fromEnvironment('XYRIX_AP');
+  static const String xyrixTcpTarget = String.fromEnvironment('XYRIX_TCP');
+
+  /// 联调：连接成功后自动下载设备上最小的文件（绕开 UI 点击，专测 SDK 下载）。
+  static const bool autoDownloadSmallest = bool.fromEnvironment(
+    'AUTO_DL',
+    defaultValue: false,
+  );
+
+  /// 联调：`AUTO_DL` 选出来的那个文件走 WiFi 快传而不是蓝牙（`AUTO_WIFI=true`）。
+  /// 用来绕开「已下载的行禁点」和列表点击不稳，只影响这条自动下载。
+  static const bool autoDownloadWifi = bool.fromEnvironment(
+    'AUTO_WIFI',
+    defaultValue: false,
+  );
   /// Xyrix 自驱动联调：连接成功后自动执行下载探测，
   /// 结果写入 Documents/xyrix_selftest_report.txt 供远程拉取验证。
   /// 2026-09-30 下载闭环验证完成，已关闭；需要远程复测时再置 true。
@@ -20,9 +53,32 @@ class Config {
     defaultValue: 0,
   );
 
+  /// Newview 裸协议探测台等级（`--dart-define=NEWVIEW_PROBE=<1..4>`）。
+  /// 0 = 关闭。它走 flutter_blue_plus 直连，**不碰厂商 AAR**——
+  /// 存在的唯一目的是给 lynse-hardware-sdk 里那份没上过真机的
+  /// `NewViewProtocolDefinition.kt` 取证。分级见 `newview_probe.dart`；
+  /// 真机上一向优先读 `newview_probe.txt`，改文件比重出包快。
+  static const int newviewProbeLevel = int.fromEnvironment(
+    'NEWVIEW_PROBE',
+    defaultValue: 0,
+  );
+
+  /// 只跑这一级（`--dart-define=NEWVIEW_PROBE_ONLY=1`）。
+  /// Newview 的 L2 会在设备上生成新录音、L4 会开热点，
+  /// 需要能单独隔离某一级跑，避免前面的步骤把设备带进不该进的状态。
+  static const int newviewProbeOnly = int.fromEnvironment(
+    'NEWVIEW_PROBE_ONLY',
+    defaultValue: 0,
+  );
+
   /// 联调期运行时可调值：默认继承下面的编译期开关，可被设备上的探测计划文件
   /// 第二行覆盖。一次出包跑完一组实验，不用逐个实验重编。
   /// 因此它们不是 const。
+
+  /// Newview 鉴权用的厂商 AppKey/SDKKey（计划文件第二行 `appkey=<16字符>`，
+  /// 真值只写进手机上那份计划文件，不进仓库、不进报告、不进日志）。
+  /// 空 = 不做握手，「设备在不握手时理不理我们」正是 L1 要先回答的问题。
+  static String newviewAppKey = '';
 
   /// 下载实验选第几个（按大小升序的）文件：0 = 最小。
   /// 别选太大——BLE 上一张 96MB 的卡要传几十分钟，联调取几十到几百 KB 级即可。

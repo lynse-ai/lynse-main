@@ -34,10 +34,13 @@ fun BleManager.updateResumeOffset() {
         } else {
 //            Log.i(TAG, "断点续传文件不存在")
 //            LogUtils.getInstance().i(TAG, "断点续传文件不存在")
+            // 断点文件已经不在了：四项状态各自归零。
+            // 此前写成 `mBPResumeSN = mBPResumeOffset` / `mBPResumeName = mBPResumeFilePath`，
+            // 等于把偏移量当成文件序列号、把路径当成文件名，续传判断会拿错标识。
             mBPResumeOffset = 0
-            mBPResumeSN = mBPResumeOffset
+            mBPResumeSN = 0
+            mBPResumeName = null
             mBPResumeFilePath = null
-            mBPResumeName = mBPResumeFilePath
         }
     }
 

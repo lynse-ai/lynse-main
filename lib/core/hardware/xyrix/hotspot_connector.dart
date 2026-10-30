@@ -14,6 +14,15 @@ abstract class HotspotConnector {
   /// 移除热点配置（传输结束/失败后调用）
   Future<void> disconnect(String ssid);
 
+  /// 用 WifiNetworkSpecifier 让系统弹框加入设备热点，并**在这条网络上**连设备的 TCP。
+  /// 返回 `joined/greeting/trials/error`；trials 每项是一次命令写法与其回包字节数。
+  Future<Map<Object?, Object?>> joinAndProbeTcp({
+    required String ssid,
+    required String password,
+    required String host,
+    required int port,
+  });
+
   /// 系统当前认为连着的 SSID。用于判断「手机是不是真的进了设备热点」——
   /// 加建议成功只代表系统收下了，不代表连上了，两件事必须分开取证
   Future<({String ssid, bool linked})> currentSsid();
@@ -34,6 +43,26 @@ class MethodChannelHotspotConnector implements HotspotConnector {
     } on MissingPluginException {
       throw const HotspotException(
           'unsupported', '当前平台未实现热点直连（需 iOS 真机）');
+    }
+  }
+
+  @override
+  Future<Map<Object?, Object?>> joinAndProbeTcp({
+    required String ssid,
+    required String password,
+    required String host,
+    required int port,
+  }) async {
+    try {
+      final r = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'joinAndProbe',
+        {'ssid': ssid, 'password': password, 'host': host, 'port': port},
+      );
+      return r ?? const {};
+    } on PlatformException catch (e) {
+      return {'error': '\${e.code}: \${e.message}'};
+    } catch (e) {
+      return {'error': '\$e'};
     }
   }
 

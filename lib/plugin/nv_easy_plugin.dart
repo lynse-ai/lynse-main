@@ -7,6 +7,8 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 enum AudioType {
@@ -105,8 +107,27 @@ class NvEasyPlugin {
   /// 连接设备
   ///
   /// [uuid] 设备的UUID
-  Future<String?> startConnect(String uuid) async {
-    return await _methodChannel.invokeMethod('startConnect', {"uuid": uuid});
+  /// [appKey] 厂商鉴权 Key（v1.2.0 起缺它设备对所有命令沉默）
+  Future<String?> startConnect(String uuid, {String? appKey}) async {
+    return await _methodChannel.invokeMethod(
+      'startConnect',
+      {"uuid": uuid, "appKey": appKey},
+    );
+  }
+
+  /// 打点。真机验证过：`recordMark` → `onRecordMark status=0 index=… offset=…`
+  Future<String?> addMark() async {
+    return await _methodChannel.invokeMethod('addMark');
+  }
+
+  /// 取消下载。厂商口径：`stopDownloadFiles` 只停传输，不会关 WiFi。
+  Future<String?> cancelDownload() async {
+    return await _methodChannel.invokeMethod('cancelDownload');
+  }
+
+  /// 删除设备文件。通道已接通但**未真机验证**（不可逆），不要当成已支持能力使用。
+  Future<String?> deleteFile(int sn, String? name) async {
+    return await _methodChannel.invokeMethod('deleteFile', {"sn": sn, "name": name});
   }
 
   /// 自动连接设备
@@ -271,6 +292,45 @@ class NvEasyPlugin {
     return result;
   }
 
+  /// 厂商 AAR 接口扫档：把每个接口都交给 NvEasyBle v1.2.0 自己发，
+  /// 逐项记录「有回包 / 超时 / 明确失败」。这是判断「卡的接口活没活」的裁判，
+  /// 不是判断「我们裸协议对不对」的裁判。
+  Future<String?> vendorProbeStart({
+    String? name,
+    String? appKey,
+    String? mac,
+    String? advHex,
+    bool record = true,
+    bool wifi = false,
+    bool delete = false,
+  }) async {
+    return await _methodChannel.invokeMethod('vendorProbeStart', {
+      'name': name,
+      'appKey': appKey,
+      'mac': mac,
+      'advHex': advHex,
+      'record': record,
+      'wifi': wifi,
+      'delete': delete,
+    });
+  }
+
+  Future<bool> vendorProbeRunning() async {
+    final r = await _methodChannel.invokeMethod('vendorProbeRunning');
+    return r == true;
+  }
+
+  Future<String> vendorProbeTail({int lines = 400}) async {
+    final r = await _methodChannel.invokeMethod('vendorProbeTail', {'lines': lines});
+    return r is String ? r : '';
+  }
+
+  Future<void> vendorProbeStop() async {
+    try {
+      await _methodChannel.invokeMethod('vendorProbeStop');
+    } catch (_) {}
+  }
+
   /// 最小化应用到后台
   ///
   Future<bool> minimizeApp() async {
@@ -280,5 +340,27 @@ class NvEasyPlugin {
     } catch (e) {
       return false;
     }
+  }
+
+  /// 传输保活：挂上 Android 前台服务。
+  ///
+  /// 失败（如 Android 12+ 后台启动限制）不抛出——保活只是尽力而为，
+  /// 不能让传输因此报错。非 Android 平台直接返回。
+  Future<void> startTransferGuard({
+    String label = '正在与录音卡同步文件',
+  }) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _methodChannel
+          .invokeMethod('startTransferGuard', {'label': label});
+    } catch (_) {}
+  }
+
+  /// 释放传输保活的前台服务（结束/失败/取消都必须调，否则通知常驻）
+  Future<void> stopTransferGuard() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _methodChannel.invokeMethod('stopTransferGuard');
+    } catch (_) {}
   }
 }

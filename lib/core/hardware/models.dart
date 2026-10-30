@@ -75,6 +75,9 @@ enum HardwareErrorCode {
   /// 资源冲突：录音 / 文件传输 / OTA 互斥
   resourceBusy,
 
+  /// 系统运行时权限未授予（蓝牙/定位/附近设备）
+  permissionDenied,
+
   connectionLost,
   transferInterrupted,
   unsupportedCapability,
